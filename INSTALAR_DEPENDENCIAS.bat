@@ -48,9 +48,15 @@ if errorlevel 1 (
   if errorlevel 1 goto error
 )
 echo.
-echo [4/4] Instalacion y verificacion completadas.
+echo [4/4] Preparando el modelo de recorte (la primera vez puede tardar)...
+%PYEXE% -c "from rembg import new_session; new_session('isnet-general-use'); print('Modelo isnet-general-use listo')"
+if errorlevel 1 (
+  echo AVISO: no se pudo preparar isnet-general-use. El desarmador intentara u2net al recortar.
+)
+echo.
+echo Instalacion y verificacion completadas.
 echo IMPORTANTE: inicia GAMEB Studio con INICIAR_GAMEB_STUDIO.bat para usar el mismo Python.
-echo La primera segmentacion puede tardar mientras se descarga el modelo de IA.
+echo La primera segmentacion puede tardar si el modelo todavia no se descargo.
 pause
 exit /b 0
 :error
