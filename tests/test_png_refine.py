@@ -3,7 +3,8 @@ import unittest
 from PIL import Image, ImageDraw
 import numpy as np
 
-import server
+from studio.desarmar.fondo import clean_background
+from studio.desarmar.recortar import refine_cutout
 
 
 def _circle(draw, box, color):
@@ -33,7 +34,7 @@ class RefineCutoutTest(unittest.TestCase):
         cut[ring, 3] = int(alpha * 255)
         cut[40:90, 160:200] = (140, 40, 200, 255)
         inner = {'x': 30, 'y': 20, 'w': 100, 'h': 100}
-        refined, info = server.refine_cutout(source, Image.fromarray(cut, 'RGBA'), inner)
+        refined, info = refine_cutout(source, Image.fromarray(cut, 'RGBA'), inner)
         arr = np.array(refined)
         self.assertGreater(info['removedFragments'], 0)
         self.assertLess(refined.width, w - 20)
@@ -53,7 +54,7 @@ class RefineCutoutTest(unittest.TestCase):
         yy, xx = np.ogrid[:80, :80]
         ring = ((xx - 40) ** 2 + (yy - 40) ** 2 <= 30 ** 2) & ((xx - 40) ** 2 + (yy - 40) ** 2 >= 12 ** 2)
         cut[ring] = (240, 210, 40, 255)
-        refined, _info = server.refine_cutout(source, Image.fromarray(cut, 'RGBA'), {'x': 8, 'y': 8, 'w': 64, 'h': 64})
+        refined, _info = refine_cutout(source, Image.fromarray(cut, 'RGBA'), {'x': 8, 'y': 8, 'w': 64, 'h': 64})
         arr = np.array(refined)
         cy, cx = arr.shape[0] // 2, arr.shape[1] // 2
         self.assertLess(int(arr[cy, cx, 3]), 10)
@@ -71,7 +72,7 @@ class RefineCutoutTest(unittest.TestCase):
         source = Image.fromarray(src, 'RGBA')
         mask = Image.new('RGBA', (w, h), (0, 0, 0, 0))
         ImageDraw.Draw(mask).rectangle((70, 30, 119, 69), fill=(255, 255, 255, 255))
-        cleaned = server.clean_background(source, mask)
+        cleaned = clean_background(source, mask)
         out = np.array(cleaned)
         center = out[50, 95, :3].astype(int)
         self.assertLess(center[0], 120)
