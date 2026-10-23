@@ -474,6 +474,8 @@ def aplicar_lamina(image, trim_x=0, trim_y=0, hole=None, erase=None, kind=''):
         local = _desplazar(box, trim_x, trim_y, width, height)
         if local:
             boxes.append(local)
+    # El monto de un panel se borra solo si el lector marcó la cifra. Detectarlo
+    # solo por la forma se come los botones i, − y + que van en la misma franja.
     es_jackpot = 'jackpot' in str(kind or '').lower()
     if boxes or es_jackpot:
         image = borrar_cifras(image, boxes, detectar=es_jackpot)

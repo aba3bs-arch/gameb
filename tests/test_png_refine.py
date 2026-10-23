@@ -1,13 +1,19 @@
 """Pruebas del recorte de PNG del desarmador, sin modelo remoto."""
+import base64
+import io
 import unittest
 from PIL import Image, ImageDraw
 import numpy as np
 
+from studio.desarmar.catalogo import aplicar_lamina
 from studio.desarmar.fondo import clean_background
 from studio.desarmar.recortar import (
+    _clase_de_pieza,
     _drawing_disappeared,
+    _recortar_desde_el_borde,
     _restore_title_letters,
     _should_restore,
+    quitar_fondo,
     refine_cutout,
 )
 
@@ -123,6 +129,113 @@ class RefineCutoutTest(unittest.TestCase):
         self.assertFalse(_should_restore('Símbolo', 0.9, 0.5))
         self.assertTrue(_drawing_disappeared(0.01, (0, 0, 280, 120)))
         self.assertFalse(_drawing_disappeared(0.4, (0, 0, 280, 120)))
+
+
+def _placa_con_margen(margen=16, tocar_arriba=False):
+    """Placa roja, palabra arriba y monto abajo, sobre un paisaje azul."""
+    ancho, alto = 220 + margen * 2, 110 + margen * 2
+    imagen = Image.new('RGBA', (ancho, alto), (30, 90, 200, 255))
+    pixel = imagen.load()
+    y0 = 0 if tocar_arriba else margen
+    for y in range(y0, y0 + 110):
+        for x in range(margen, margen + 220):
+            pixel[x, y] = (150, 24, 32, 255)
+    for index in range(5):
+        x0 = margen + 28 + index * 34
+        for y in range(y0 + 16, y0 + 40):
+            for x in range(x0, x0 + 18):
+                pixel[x, y] = (245, 220, 120, 255)
+    for index in range(8):
+        x0 = margen + 24 + index * 22
+        for y in range(y0 + 62, y0 + 92):
+            for x in range(x0, x0 + 12):
+                pixel[x, y] = (245, 220, 120, 255)
+    return imagen
+
+
+class RecortePorTipoTest(unittest.TestCase):
+    def test_cada_tipo_elige_su_corte(self):
+        self.assertEqual(_clase_de_pieza('Fondo fondo_principal'), 'fondo')
+        self.assertEqual(_clase_de_pieza('Marco de rodillos marco_rodillos'), 'marco')
+        self.assertEqual(_clase_de_pieza('Jackpot jackpot_grand'), 'placa')
+        self.assertEqual(_clase_de_pieza('Panel panel_apuesta'), 'placa')
+        self.assertEqual(_clase_de_pieza('Símbolo simbolo_charro'), 'silueta')
+        self.assertEqual(_clase_de_pieza('Título titulo_dragon'), 'silueta')
+
+    def test_la_placa_suelta_el_margen_y_vacia_el_monto(self):
+        imagen = _placa_con_margen()
+        recorte, info = _recortar_desde_el_borde(imagen, 'placa')
+        self.assertEqual(info['engine'], 'borde-placa')
+        arr = np.array(recorte)
+        self.assertLess(int(arr[0, 0, 3]), 16)
+        self.assertEqual(int(arr[arr.shape[0] // 2, arr.shape[1] // 2, 3]), 255)
+        salida = np.array(aplicar_lamina(recorte, kind='Jackpot jackpot_grand'))
+        arriba = salida[:salida.shape[0] // 2]
+        abajo = salida[salida.shape[0] // 2:]
+        self.assertGreater(int(((arriba[:, :, 0] > 200) & (arriba[:, :, 1] > 160)).sum()), 1000)
+        self.assertEqual(int(((abajo[:, :, 0] > 200) & (abajo[:, :, 1] > 160)).sum()), 0)
+        self.assertGreater(int(((abajo[:, :, 0] > 120) & (abajo[:, :, 1] < 90) & (abajo[:, :, 3] == 255)).sum()), 400)
+
+    def test_una_placa_sin_margen_sigue_opaca_y_sin_monto(self):
+        imagen = _placa_con_margen(margen=0)
+        recorte, info = _recortar_desde_el_borde(imagen, 'placa')
+        arr = np.array(recorte)
+        self.assertEqual(float((arr[:, :, 3] < 16).mean()), 0.0)
+        self.assertEqual(int(arr[0, 0, 3]), 255)
+        salida = np.array(aplicar_lamina(recorte, kind='Jackpot'))
+        self.assertEqual(int(((salida[60:, :, 0] > 200) & (salida[60:, :, 1] > 160)).sum()), 0)
+        self.assertGreater(int(((salida[:40, :, 0] > 200) & (salida[:40, :, 1] > 160)).sum()), 1000)
+
+    def test_un_adorno_que_toca_el_borde_no_abre_la_placa(self):
+        imagen = _placa_con_margen(tocar_arriba=True)
+        recorte, info = _recortar_desde_el_borde(imagen, 'placa')
+        arr = np.array(recorte)
+        self.assertLess(int(arr[0, -1, 3]), 16)
+        self.assertEqual(int(arr[arr.shape[0] // 2, arr.shape[1] // 2, 3]), 255)
+        self.assertGreater(float((arr[:, :, 3] > 200).mean()), 0.7)
+
+    def test_el_marco_suelta_el_paisaje_y_vacia_la_ventana(self):
+        ancho, alto = 160, 120
+        imagen = Image.new('RGBA', (ancho, alto), (30, 90, 200, 255))
+        pixel = imagen.load()
+        for y in range(10, alto - 10):
+            for x in range(10, ancho - 10):
+                pixel[x, y] = (210, 160, 40, 255)
+        for y in range(28, alto - 28):
+            for x in range(28, ancho - 28):
+                pixel[x, y] = (20, 140, 40, 255)
+        recorte, info = _recortar_desde_el_borde(imagen, 'marco')
+        self.assertEqual(info['engine'], 'borde-marco')
+        salida = np.array(aplicar_lamina(recorte, info['trimX'], info['trimY'], kind='Marco de rodillos marco_rodillos'))
+        self.assertLess(int(salida[0, 0, 3]), 16)
+        self.assertGreater(int(salida[4, salida.shape[1] // 2, 3]), 200)
+        self.assertLess(int(salida[salida.shape[0] // 2, salida.shape[1] // 2, 3]), 16)
+
+    def test_el_panel_conserva_los_botones_si_nadie_marco_la_cifra(self):
+        imagen = Image.new('RGBA', (180, 70), (40, 18, 16, 255))
+        pixel = imagen.load()
+        for index, x0 in enumerate((16, 78, 140)):
+            for y in range(22, 48):
+                for x in range(x0, x0 + 16):
+                    pixel[x, y] = (245, 220, 120, 255)
+        intacto = np.array(aplicar_lamina(imagen, kind='Panel panel_apuesta'))
+        self.assertGreater(int(((intacto[:, :, 0] > 200) & (intacto[:, :, 1] > 160)).sum()), 900)
+        vacio = np.array(aplicar_lamina(imagen, erase=[{'x': 78, 'y': 22, 'w': 16, 'h': 26}], kind='Panel panel_apuesta'))
+        self.assertLess(int(vacio[34, 86, 1]), 80)
+        self.assertGreater(int(vacio[34, 24, 1]), 160)
+
+    def test_el_fondo_no_pasa_por_el_recorte_de_silueta(self):
+        imagen = Image.new('RGBA', (24, 16), (12, 40, 90, 255))
+        buf = io.BytesIO()
+        imagen.save(buf, format='PNG')
+        data = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode('ascii')
+        status, body = quitar_fondo({'image': data, 'kind': 'Fondo fondo_principal'})
+        self.assertEqual(status, 200)
+        self.assertEqual(body['engine'], 'fondo')
+        self.assertEqual(body['width'], 24)
+        status, body = quitar_fondo({'image': data, 'kind': 'Jackpot jackpot_grand'})
+        self.assertEqual(status, 200)
+        self.assertEqual(body['engine'], 'borde-placa')
 
 
 if __name__ == '__main__':

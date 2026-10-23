@@ -309,6 +309,70 @@ def refine_cutout(source_rgba, cutout_rgba, inner=None):
     trimmed = image.crop((x0, y0, x1, y1))
     return trimmed, {'removedFragments': removed, 'trimX': x0, 'trimY': y0, 'width': trimmed.width, 'height': trimmed.height}
 
+def _clase_de_pieza(kind):
+    """Cada tipo de pieza se corta con su propia regla."""
+    text = str(kind or '').lower()
+    if 'fondo' in text:
+        return 'fondo'
+    if 'marco' in text:
+        return 'marco'
+    if 'jackpot' in text or 'panel' in text:
+        return 'placa'
+    return 'silueta'
+
+
+def _fondo_conectado_al_borde(rgb, salto=24):
+    """El paisaje que toca el borde del recorte. Se detiene en el filo de la pieza.
+
+    La semilla es el color más repetido del borde. Un adorno que llega a la orilla
+    no abre el relleno hacia dentro de la placa.
+    """
+    np = _need_numpy()
+    from collections import deque
+    h, w = rgb.shape[:2]
+    color = rgb.astype(np.int16)
+    fondo = np.zeros((h, w), dtype=bool)
+    if h < 3 or w < 3:
+        return fondo
+    borde = np.zeros((h, w), dtype=bool)
+    borde[0, :] = borde[-1, :] = True
+    borde[:, 0] = borde[:, -1] = True
+    ref = np.median(color[borde], axis=0)
+    ys, xs = np.nonzero(borde)
+    queue = deque()
+    for y, x in zip(ys.tolist(), xs.tolist()):
+        if int(np.max(np.abs(color[y, x] - ref))) <= salto:
+            fondo[y, x] = True
+            queue.append((y, x))
+    while queue:
+        y, x = queue.popleft()
+        base = color[y, x]
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if ny < 0 or nx < 0 or ny >= h or nx >= w or fondo[ny, nx]:
+                continue
+            if int(np.max(np.abs(color[ny, nx] - base))) > salto:
+                continue
+            fondo[ny, nx] = True
+            queue.append((ny, nx))
+    return fondo
+
+
+def _recortar_desde_el_borde(source, clase):
+    """Placa y marco: suelta el fondo pegado al borde y conserva el dibujo plano."""
+    np = _need_numpy()
+    rgb = np.array(source.convert('RGB'))
+    fondo = _fondo_conectado_al_borde(rgb)
+    ratio = float(fondo.mean()) if fondo.size else 0.0
+    limite = 0.40 if clase == 'placa' else 0.55
+    arr = np.array(source.convert('RGBA'))
+    if 0.015 <= ratio <= limite:
+        arr[fondo, 3] = 0
+        arr[fondo, :3] = 0
+    refined, info = refine_cutout(source, Image.fromarray(arr, 'RGBA'), None)
+    info['engine'] = 'borde-' + clase
+    return refined, info
+
+
 def _segment_cutout(source, inner, kind=''):
     try:
         from rembg import remove, new_session
@@ -428,8 +492,14 @@ def quitar_fondo(data):
         source = Image.open(io.BytesIO(raw)).convert('RGBA')
         if source.width < 2 or source.height < 2:
             return 400, {'ok': False, 'error': 'El recorte está vacío o sus dimensiones no son válidas.'}
-        kind = str(data.get('kind') or '')[:40]
-        result, info = _segment_cutout(source, data.get('inner'), kind)
+        kind = str(data.get('kind') or '')[:80]
+        clase = _clase_de_pieza(kind)
+        if clase == 'fondo':
+            result, info = source, {'trimX': 0, 'trimY': 0, 'engine': 'fondo', 'removedFragments': 0}
+        elif clase in ('placa', 'marco'):
+            result, info = _recortar_desde_el_borde(source, clase)
+        else:
+            result, info = _segment_cutout(source, data.get('inner'), kind)
         from studio.desarmar.catalogo import aplicar_lamina
         result = aplicar_lamina(
             result,
