@@ -1,0 +1,99 @@
+"""La lámina asigna un archivo por objeto, sin llamar al modelo."""
+import unittest
+
+from PIL import Image
+import numpy as np
+
+from studio.desarmar.catalogo import aplicar_lamina, borrar_cifras, preparar_catalogo, vaciar_hueco
+
+
+def _pieza(**kwargs):
+    base = {'x': 0, 'y': 0, 'w': 40, 'h': 40, 'confidence': 1}
+    base.update(kwargs)
+    return base
+
+
+class CatalogoTest(unittest.TestCase):
+    def test_nombra_la_lamina_y_quita_la_cifra_de_la_placa(self):
+        comps = [
+            _pieza(id='titulo', name='Letrero TIERRA MEXICANA', type='Título / logo', x=100, y=0, w=400, h=120, titleWords=['TIERRA', 'MEXICANA']),
+            _pieza(id='jackpot_grand', name='Jackpot GRAND', type='Jackpot', x=10, y=20, w=220, h=90, _parts=[
+                {'text': '$100,000.00', 'role': 'cifra', 'x': 40, 'y': 60, 'w': 140, 'h': 28},
+            ]),
+            _pieza(id='monto', name='$10,000.00', type='Otro', x=280, y=70, w=120, h=24),
+            _pieza(id='jackpot_major', name='Jackpot MAJOR', type='Jackpot', x=250, y=20, w=200, h=90),
+            _pieza(id='marco', name='Marco de rodillos', type='Marco de rodillos', x=80, y=160, w=500, h=360, _hole={'x': 120, 'y': 200, 'w': 420, 'h': 280}),
+            _pieza(id='charro', name='Charro', type='Símbolo', x=140, y=220, w=70, h=70),
+            _pieza(id='charro_2', name='Charro', type='Símbolo', x=220, y=220, w=70, h=70),
+            _pieza(id='boton_menos', name='Botón menos', type='Botón', x=700, y=40, w=40, h=40),
+            _pieza(id='boton_mas', name='Botón más', type='Botón', x=760, y=40, w=40, h=40),
+            _pieza(id='girar', name='Girar', type='Botón', x=700, y=100, w=90, h=90),
+            _pieza(id='apuesta', name='Apuesta', type='Panel', x=20, y=500, w=120, h=50),
+            _pieza(id='izq', name='20 LINEAS', type='Contador', x=20, y=560, w=70, h=40),
+            _pieza(id='der', name='20 LINEAS', type='Contador', x=640, y=560, w=70, h=40),
+            _pieza(id='fondo', name='Fondo principal', type='Fondo', x=0, y=0, w=800, h=600),
+        ]
+        quedaron, notes = preparar_catalogo(comps, 800, 600)
+        nombres = [comp['fileName'] for comp in quedaron]
+        self.assertIn('titulo_tierra_mexicana', nombres)
+        self.assertIn('jackpot_grand', nombres)
+        self.assertIn('jackpot_major', nombres)
+        self.assertIn('marco_rodillos', nombres)
+        self.assertIn('simbolo_charro', nombres)
+        self.assertIn('simbolo_charro_2', nombres)
+        self.assertIn('boton_menos', nombres)
+        self.assertIn('boton_mas', nombres)
+        self.assertIn('boton_girar', nombres)
+        self.assertIn('panel_apuesta', nombres)
+        self.assertIn('indicador_lineas_izq', nombres)
+        self.assertIn('indicador_lineas_der', nombres)
+        self.assertIn('fondo_principal', nombres)
+        self.assertNotIn('monto', [comp['id'] for comp in quedaron])
+        grand = next(comp for comp in quedaron if comp['fileName'] == 'jackpot_grand')
+        self.assertEqual(len(grand['erase']), 1)
+        self.assertEqual(grand['erase'][0]['x'], 40)
+        major = next(comp for comp in quedaron if comp['fileName'] == 'jackpot_major')
+        self.assertTrue(any(box['x'] == 280 for box in major['erase']))
+        marco = next(comp for comp in quedaron if comp['fileName'] == 'marco_rodillos')
+        self.assertEqual(marco['hole']['w'], 420)
+        self.assertFalse(marco['holeEstimated'])
+        self.assertTrue(any('cifra' in note for note in notes))
+
+    def test_estima_el_centro_del_marco_cuando_no_viene_la_ventana(self):
+        comps = [_pieza(id='marco', name='Marco de rodillos', type='Marco de rodillos', x=0, y=0, w=200, h=100)]
+        quedaron, notes = preparar_catalogo(comps, 200, 100)
+        hole = quedaron[0]['hole']
+        self.assertGreater(hole['x'], 0)
+        self.assertGreater(hole['y'], 0)
+        self.assertLess(hole['x'] + hole['w'], 200)
+        self.assertTrue(quedaron[0]['holeEstimated'])
+        self.assertTrue(notes)
+
+    def test_vacia_el_centro_y_conserva_el_marco(self):
+        image = Image.new('RGBA', (100, 80), (220, 170, 40, 255))
+        vacio = vaciar_hueco(image, {'x': 20, 'y': 16, 'w': 60, 'h': 48})
+        arr = np.array(vacio)
+        self.assertLess(int(arr[40, 50, 3]), 10)
+        self.assertGreater(int(arr[2, 2, 3]), 200)
+        self.assertGreater(int(arr[2, 2, 0]), 180)
+
+    def test_borra_la_cifra_y_deja_el_color_de_la_placa(self):
+        arr = np.zeros((40, 80, 4), np.uint8)
+        arr[:, :] = (180, 20, 30, 255)
+        arr[14:26, 30:54] = (245, 245, 245, 255)
+        limpio = borrar_cifras(Image.fromarray(arr, 'RGBA'), [{'x': 30, 'y': 14, 'w': 24, 'h': 12}])
+        centro = np.array(limpio)[20, 40]
+        self.assertGreater(int(centro[0]), 140)
+        self.assertLess(int(centro[1]), 80)
+        self.assertEqual(int(centro[3]), 255)
+
+    def test_el_marco_recortado_queda_con_el_centro_vacio(self):
+        image = Image.new('RGBA', (100, 80), (220, 170, 40, 255))
+        salida = aplicar_lamina(image, kind='Marco de rodillos')
+        arr = np.array(salida)
+        self.assertLess(int(arr[40, 50, 3]), 10)
+        self.assertGreater(int(arr[1, 1, 3]), 200)
+
+
+if __name__ == '__main__':
+    unittest.main()

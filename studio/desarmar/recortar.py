@@ -428,7 +428,17 @@ def quitar_fondo(data):
         source = Image.open(io.BytesIO(raw)).convert('RGBA')
         if source.width < 2 or source.height < 2:
             return 400, {'ok': False, 'error': 'El recorte está vacío o sus dimensiones no son válidas.'}
-        result, info = _segment_cutout(source, data.get('inner'), str(data.get('kind') or '')[:40])
+        kind = str(data.get('kind') or '')[:40]
+        result, info = _segment_cutout(source, data.get('inner'), kind)
+        from studio.desarmar.catalogo import aplicar_lamina
+        result = aplicar_lamina(
+            result,
+            info.get('trimX', 0),
+            info.get('trimY', 0),
+            data.get('hole'),
+            data.get('erase'),
+            kind,
+        )
         out = io.BytesIO()
         result.save(out, format='PNG', optimize=True)
         import base64

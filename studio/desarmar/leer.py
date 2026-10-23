@@ -6,6 +6,7 @@ import re
 
 from studio.auth import access_token
 from studio.datos import decode_data
+from studio.desarmar.catalogo import CATALOGO, preparar_catalogo
 from studio.desarmar.recortar import Image
 from studio.desarmar.unir import LEER_TITULO, _is_title_kind, unir_titulo
 from studio.openai_client import choose_model, openai_response
@@ -56,7 +57,13 @@ def _normalizar(raw, index, width, height):
         confidence = max(0, min(1, float(raw.get('confidence', .5))))
     except (TypeError, ValueError):
         confidence = .5
-    return {'id': ident, 'name': nombre, 'type': tipo, 'x': x, 'y': y, 'w': w, 'h': h, 'confidence': confidence}
+    comp = {'id': ident, 'name': nombre, 'type': tipo, 'x': x, 'y': y, 'w': w, 'h': h, 'confidence': confidence}
+    if isinstance(raw.get('parts'), list):
+        comp['_parts'] = raw.get('parts')
+    hole = raw.get('hole') if isinstance(raw.get('hole'), dict) else raw.get('hueco')
+    if isinstance(hole, dict):
+        comp['_hole'] = hole
+    return comp
 
 
 def _aplicar_titulo(comp, raw, width, height):
@@ -82,7 +89,7 @@ def analyze_with_openai(image_data, name, cols, rows, notes):
         token = key
         auth_mode = 'api'
     head, raw = decode_data(image_data)
-    prompt = f"""Actúa como un sistema profesional de segmentación de assets para videojuegos. Analiza toda la imagen primero e identifica cada componente visible por separado. Devuelve SOLO JSON válido con shape {{"summary":"...","components":[{{"id":"snake_case","name":"nombre español","type":"Fondo|Título / logo|Marco de rodillos|Símbolo|Jackpot|Botón|Contador|Panel|Bonus|Decoración|Efecto|Otro","x":int,"y":int,"w":int,"h":int,"confidence":0.0,"parts":[{{"text":"PALABRA","role":"palabra|adorno","x":int,"y":int,"w":int,"h":int,"missing":false}}]}}]}}. Coordenadas en píxeles de la imagen original. {LEER_TITULO} REGLAS OBLIGATORIAS: (1) Si dos objetos se tocan o están muy juntos, NO los unas en una sola pieza: crea una caja independiente por objeto, aunque sus cajas se solapen un poco. El título no se entrega como un rectángulo final: sus palabras y adornos van en parts y el programa los une. (2) La caja debe abarcar el COMPONENTE VISUAL COMPLETO, no solo el texto o la parte central. En un título, cada parte cubre esa palabra o ese adorno completo. (3) No uses una caja enorme que incluya varios componentes distintos. (4) Identifica y separa primero las piezas de primer plano; trata el fondo/escena como una capa independiente al final. (5) En grupos de símbolos repetidos, devuelve una caja por símbolo. (6) Si una frontera no puede determinarse con seguridad, conserva la caja individual más razonable y baja confidence. Si una palabra del título no tiene frontera, márcala missing true. (7) No inventes píxeles ocultos. Si las notas piden una sola caja para el título, ignóralas: parts manda. Columna/filas esperadas {cols}x{rows}. Nombre del juego: {name or 'sin nombre'}. Notas adicionales: {notes}. Máximo 80 componentes. Si la imagen es boceto, identifica regiones propuestas, no afirmes que son PNG ya extraídos."""
+    prompt = f"""Actúa como un sistema profesional de segmentación de assets para videojuegos. Analiza toda la imagen primero e identifica cada componente visible por separado. Devuelve SOLO JSON válido con shape {{"summary":"...","components":[{{"id":"snake_case","name":"nombre español","type":"Fondo|Título / logo|Marco de rodillos|Símbolo|Jackpot|Botón|Contador|Panel|Bonus|Decoración|Efecto|Otro","x":int,"y":int,"w":int,"h":int,"confidence":0.0,"hole":{{"x":int,"y":int,"w":int,"h":int}},"parts":[{{"text":"PALABRA","role":"palabra|adorno|cifra","x":int,"y":int,"w":int,"h":int,"missing":false}}]}}]}}. Coordenadas en píxeles de la imagen original. {LEER_TITULO} {CATALOGO} REGLAS OBLIGATORIAS: (1) Si dos objetos se tocan o están muy juntos, NO los unas en una sola pieza: crea una caja independiente por objeto, aunque sus cajas se solapen un poco. El título no se entrega como un rectángulo final: sus palabras y adornos van en parts y el programa los une. (2) La caja debe abarcar el COMPONENTE VISUAL COMPLETO, no solo el texto o la parte central. En un título, cada parte cubre esa palabra o ese adorno completo. (3) No uses una caja enorme que incluya varios componentes distintos. (4) Identifica y separa primero las piezas de primer plano; trata el fondo/escena como una capa independiente al final. (5) En grupos de símbolos repetidos, devuelve una caja por símbolo. (6) Si una frontera no puede determinarse con seguridad, conserva la caja individual más razonable y baja confidence. Si una palabra del título no tiene frontera, márcala missing true. (7) No inventes píxeles ocultos. Si las notas piden una sola caja para el título, ignóralas: parts manda. Columna/filas esperadas {cols}x{rows}. Nombre del juego: {name or 'sin nombre'}. Notas adicionales: {notes}. Máximo 80 componentes. Si la imagen es boceto, identifica regiones propuestas, no afirmes que son PNG ya extraídos."""
     body = {
         'model': choose_model(token),
         'input': [{'role': 'user', 'content': [
@@ -108,9 +115,11 @@ def analyze_with_openai(image_data, name, cols, rows, notes):
             _aplicar_titulo(comp, raw_component, width, height)
             title_notes.append('Título «' + comp['name'] + '»: ' + comp['titleReason'])
         comps.append(comp)
+    comps, catalog_notes = preparar_catalogo(comps, width, height)
     summary = str(parsed.get('summary', 'Análisis terminado. Revisa todas las cajas antes de extraer.'))
-    if title_notes:
-        summary = summary + ' ' + ' '.join(title_notes)
+    extras = title_notes + catalog_notes
+    if extras:
+        summary = summary + ' ' + ' '.join(extras)
     return {
         'summary': summary,
         'components': comps,
@@ -134,9 +143,17 @@ def analizar(data):
     except Exception as exc:
         return 502, {'error': str(exc)}
     if result is None:
+        components, catalog_notes = preparar_catalogo(
+            fallback_components(width, height, int(data.get('columns', 5)), int(data.get('rows', 3))),
+            width,
+            height,
+        )
+        summary = 'No hay OPENAI_API_KEY en el entorno. Se muestra una plantilla geométrica de respaldo, no una detección IA. Ajusta las cajas manualmente.'
+        if catalog_notes:
+            summary = summary + ' ' + ' '.join(catalog_notes)
         result = {
-            'summary': 'No hay OPENAI_API_KEY en el entorno. Se muestra una plantilla geométrica de respaldo, no una detección IA. Ajusta las cajas manualmente.',
-            'components': fallback_components(width, height, int(data.get('columns', 5)), int(data.get('rows', 3))),
+            'summary': summary,
+            'components': components,
             'aiUsed': False,
             'imageWidth': width,
             'imageHeight': height,
