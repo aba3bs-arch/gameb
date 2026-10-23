@@ -10,21 +10,320 @@ try:
  from PIL import Image
 except Exception: Image=None
 
-# Reutiliza la sesión de segmentación para evitar inicializar el modelo en cada recorte.
-_REMBG_SESSION = None
-_REMBG_SESSION_LOCK = threading.Lock()
+# Reutiliza cada modelo de segmentación. isnet conserva mejor letras y adornos que u2net.
+_REMBG_SESSIONS = {}
+_REMBG_FAILED = set()
+_REMBG_SESSION_LOCK = threading.RLock()
+_SEGMENT_MODELS = ('isnet-general-use', 'u2net')
 
-def _get_rembg_session(new_session):
-    """Inicializa una única sesión de rembg bajo bloqueo; no oculta errores del modelo."""
-    global _REMBG_SESSION
+def _get_rembg_session(new_session, model_name):
+    """Inicializa una sesión de rembg bajo bloqueo; no oculta errores del modelo."""
     with _REMBG_SESSION_LOCK:
-        if _REMBG_SESSION is not None:
-            return _REMBG_SESSION
-        session = new_session('u2net')
+        if model_name in _REMBG_SESSIONS:
+            return _REMBG_SESSIONS[model_name]
+        if model_name in _REMBG_FAILED:
+            raise RuntimeError('El modelo '+model_name+' no está disponible en este equipo.')
+        try:
+            session = new_session(model_name)
+        except Exception as exc:
+            _REMBG_FAILED.add(model_name)
+            raise RuntimeError('No se pudo cargar '+model_name+': '+str(exc)[:180])
         if session is None:
-            raise RuntimeError('rembg no pudo crear la sesión u2net.')
-        _REMBG_SESSION = session
+            _REMBG_FAILED.add(model_name)
+            raise RuntimeError('rembg no pudo crear la sesión '+model_name+'.')
+        _REMBG_SESSIONS[model_name] = session
         return session
+
+def _warm_segmenter():
+    try:
+        from rembg import new_session
+        _get_rembg_session(new_session, _SEGMENT_MODELS[0])
+        print('Modelo de recorte listo:', _SEGMENT_MODELS[0])
+    except Exception as exc:
+        print('Aviso: no se pudo preparar', _SEGMENT_MODELS[0], '('+str(exc)[:180]+'). El recorte intentará u2net.')
+
+def _need_numpy():
+    try:
+        import numpy as np
+    except Exception as exc:
+        raise RuntimeError('Falta numpy para limpiar los PNG. Ejecuta INSTALAR_DEPENDENCIAS.bat. '+str(exc)[:120])
+    return np
+
+def _parse_inner(inner, width, height):
+    if not isinstance(inner, dict):
+        margin = max(1, int(round(min(width, height) * 0.02)))
+        return margin, margin, max(1, width - 2 * margin), max(1, height - 2 * margin)
+    try:
+        x = int(float(inner.get('x', 0)))
+        y = int(float(inner.get('y', 0)))
+        w = int(float(inner.get('w', width)))
+        h = int(float(inner.get('h', height)))
+    except (TypeError, ValueError):
+        return 0, 0, width, height
+    x = max(0, min(width - 1, x))
+    y = max(0, min(height - 1, y))
+    w = max(1, min(width - x, w))
+    h = max(1, min(height - y, h))
+    return x, y, w, h
+
+def _shift_bool(mask, dy, dx):
+    np = _need_numpy()
+    out = np.zeros_like(mask)
+    h, w = mask.shape
+    y_dst = slice(max(0, dy), h + min(0, dy))
+    x_dst = slice(max(0, dx), w + min(0, dx))
+    y_src = slice(max(0, -dy), h - max(0, dy))
+    x_src = slice(max(0, -dx), w - max(0, dx))
+    out[y_dst, x_dst] = mask[y_src, x_src]
+    return out
+
+def _shift_color(arr, dy, dx):
+    np = _need_numpy()
+    out = np.zeros_like(arr)
+    h, w = arr.shape[:2]
+    y_dst = slice(max(0, dy), h + min(0, dy))
+    x_dst = slice(max(0, dx), w + min(0, dx))
+    y_src = slice(max(0, -dy), h - max(0, dy))
+    x_src = slice(max(0, -dx), w - max(0, dx))
+    out[y_dst, x_dst] = arr[y_src, x_src]
+    return out
+
+def _dilate_bool(mask, radius):
+    out = mask.copy()
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if dy * dy + dx * dx > radius * radius:
+                continue
+            out |= _shift_bool(mask, dy, dx)
+    return out
+
+def _label_components(mask):
+    np = _need_numpy()
+    try:
+        from scipy import ndimage
+        labels, count = ndimage.label(mask, structure=np.ones((3, 3), dtype=np.uint8))
+        return labels, int(count)
+    except Exception:
+        return _label_components_py(mask)
+
+def _label_components_py(mask):
+    np = _need_numpy()
+    h, w = mask.shape
+    labels = np.zeros((h, w), np.int32)
+    count = 0
+    ys, xs = np.nonzero(mask)
+    seen = np.zeros(h * w, np.uint8)
+    flat = mask.reshape(-1)
+    for y0, x0 in zip(ys.tolist(), xs.tolist()):
+        start = y0 * w + x0
+        if seen[start]:
+            continue
+        count += 1
+        stack = [start]
+        seen[start] = 1
+        labels[y0, x0] = count
+        while stack:
+            i = stack.pop()
+            y, x = divmod(i, w)
+            y_lo, y_hi = max(0, y - 1), min(h, y + 2)
+            x_lo, x_hi = max(0, x - 1), min(w, x + 2)
+            for ny in range(y_lo, y_hi):
+                row = ny * w
+                for nx in range(x_lo, x_hi):
+                    j = row + nx
+                    if seen[j] or not flat[j]:
+                        continue
+                    seen[j] = 1
+                    labels[ny, nx] = count
+                    stack.append(j)
+    return labels, count
+
+def _keep_components(alpha, inner):
+    """Quita fragmentos que no pertenecen a la caja original, como un vecino metido en el margen."""
+    np = _need_numpy()
+    fg = alpha >= 16
+    h, w = alpha.shape
+    ix, iy, iw, ih = inner
+    labels, count = _label_components(fg)
+    if count <= 1:
+        return alpha, 0
+    region = np.zeros((h, w), dtype=bool)
+    region[iy:iy + ih, ix:ix + iw] = True
+    overlap = np.bincount(labels[fg & region].ravel(), minlength=count + 1)
+    area = np.bincount(labels[fg].ravel(), minlength=count + 1)
+    keep = np.zeros(count + 1, dtype=bool)
+    for i in range(1, count + 1):
+        if area[i] and overlap[i] / area[i] >= 0.30:
+            keep[i] = True
+    kept = keep[labels]
+    if int(np.count_nonzero(kept)) < max(8, int(np.count_nonzero(fg) * 0.15)):
+        return alpha, 0
+    cleaned = np.where(kept, alpha, 0).astype(np.uint8)
+    removed = int(count - int(np.count_nonzero(keep[1:])))
+    return cleaned, removed
+
+def _defringe(src, out):
+    """Recupera el color del borde para que no quede un halo del fondo."""
+    np = _need_numpy()
+    alpha = out[:, :, 3]
+    transparent = alpha < 12
+    if int(np.count_nonzero(transparent)) >= 8:
+        bg = np.median(src[:, :, :3][transparent], axis=0)
+    else:
+        corners = np.stack([src[0, 0, :3], src[0, -1, :3], src[-1, 0, :3], src[-1, -1, :3]])
+        bg = np.median(corners, axis=0)
+    a = alpha.astype(np.float32) / 255.0
+    rgb = out[:, :, :3].astype(np.float32)
+    edge = (alpha > 0) & (alpha < 248)
+    if np.any(edge):
+        unmixed = (rgb - bg * (1.0 - a)[..., None]) / np.maximum(a, 0.12)[..., None]
+        rgb[edge] = np.clip(unmixed[edge], 0, 255)
+        out[:, :, :3] = rgb.astype(np.uint8)
+    opaque = alpha > 240
+    interior = opaque.copy()
+    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
+        interior &= _shift_bool(opaque, dy, dx)
+    rim = opaque & ~interior
+    if not np.any(rim) or not np.any(interior):
+        return
+    color = out[:, :, :3].copy()
+    known = interior
+    for _ in range(2):
+        nxt = color.copy()
+        nxt_known = known.copy()
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            shifted = _shift_color(color, dy, dx)
+            shifted_known = _shift_bool(known, dy, dx)
+            take = rim & ~nxt_known & shifted_known
+            nxt[take] = shifted[take]
+            nxt_known |= take
+        color, known = nxt, nxt_known
+    out[:, :, :3][rim] = color[rim]
+
+def refine_cutout(source_rgba, cutout_rgba, inner=None):
+    """Limpia la máscara: quita vecinos, el halo y el margen vacío."""
+    np = _need_numpy()
+    if Image is None:
+        raise RuntimeError('Falta Pillow.')
+    source_rgba = source_rgba.convert('RGBA')
+    cutout_rgba = cutout_rgba.convert('RGBA')
+    if cutout_rgba.size != source_rgba.size:
+        resample = Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST
+        cutout_rgba = cutout_rgba.resize(source_rgba.size, resample)
+    src = np.array(source_rgba)
+    out = np.array(cutout_rgba)
+    h, w = out.shape[:2]
+    alpha, removed = _keep_components(out[:, :, 3], _parse_inner(inner, w, h))
+    alpha = alpha.copy()
+    alpha[alpha < 12] = 0
+    if int(np.max(alpha)) < 8:
+        raise RuntimeError('La máscara quedó prácticamente vacía; no se exportó una silueta incorrecta.')
+    out[:, :, 3] = alpha
+    _defringe(src, out)
+    out[out[:, :, 3] == 0, :3] = 0
+    image = Image.fromarray(out, 'RGBA')
+    ys, xs = np.nonzero(out[:, :, 3] > 8)
+    if len(xs) == 0:
+        raise RuntimeError('La máscara quedó prácticamente vacía; no se exportó una silueta incorrecta.')
+    pad = 2
+    x0 = max(0, int(xs.min()) - pad)
+    y0 = max(0, int(ys.min()) - pad)
+    x1 = min(w, int(xs.max()) + 1 + pad)
+    y1 = min(h, int(ys.max()) + 1 + pad)
+    trimmed = image.crop((x0, y0, x1, y1))
+    return trimmed, {'removedFragments': removed, 'trimX': x0, 'trimY': y0, 'width': trimmed.width, 'height': trimmed.height}
+
+def _segment_cutout(source, inner):
+    try:
+        from rembg import remove, new_session
+    except Exception as imp_err:
+        raise RuntimeError('No se pudo cargar rembg/onnxruntime. Ejecuta INSTALAR_DEPENDENCIAS.bat, espera a que termine sin errores y reinicia GAMEB Studio. Detalle: '+str(imp_err)[:180])
+    errors = []
+    for model in _SEGMENT_MODELS:
+        try:
+            session = _get_rembg_session(new_session, model)
+            raw = remove(source, session=session, alpha_matting=False, post_process_mask=False)
+            if not isinstance(raw, Image.Image):
+                raw = Image.open(io.BytesIO(raw)).convert('RGBA')
+            refined, info = refine_cutout(source, raw.convert('RGBA'), inner)
+            info['engine'] = model
+            return refined, info
+        except Exception as exc:
+            errors.append(model+': '+str(exc)[:160])
+    raise RuntimeError('No se pudo separar la pieza. '+' | '.join(errors))
+
+def _resize_rgb(arr, size):
+    np = _need_numpy()
+    resample = Image.Resampling.BILINEAR if hasattr(Image, 'Resampling') else Image.BILINEAR
+    image = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), 'RGB')
+    return np.asarray(image.resize(size, resample), np.float32)
+
+def _resize_mask(mask, size):
+    np = _need_numpy()
+    resample = Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST
+    image = Image.fromarray(mask.astype(np.uint8) * 255, 'L')
+    return np.asarray(image.resize(size, resample)) > 127
+
+def _smooth_hole(rgb, hole, times):
+    np = _need_numpy()
+    filled = rgb
+    for _ in range(times):
+        acc = np.zeros_like(filled)
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            acc += _shift_color(filled, dy, dx)
+        nxt = filled.copy()
+        nxt[hole] = (acc / 4.0)[hole]
+        filled = nxt
+    return filled
+
+def _pyramid_fill(rgb, hole):
+    np = _need_numpy()
+    stack = []
+    cur_rgb, cur_hole = rgb, hole
+    while max(cur_rgb.shape[:2]) > 32 and np.any(cur_hole):
+        nh = max(1, cur_rgb.shape[0] // 2)
+        nw = max(1, cur_rgb.shape[1] // 2)
+        stack.append((cur_rgb, cur_hole))
+        cur_rgb = _resize_rgb(cur_rgb, (nw, nh))
+        cur_hole = _resize_mask(cur_hole, (nw, nh))
+    if np.any(~cur_hole):
+        mean = cur_rgb[~cur_hole].reshape(-1, 3).mean(axis=0)
+    else:
+        mean = np.zeros(3, np.float32)
+    filled = cur_rgb.copy()
+    filled[cur_hole] = mean
+    filled = _smooth_hole(filled, cur_hole, 8)
+    while stack:
+        up_rgb, up_hole = stack.pop()
+        upsampled = _resize_rgb(filled, (up_rgb.shape[1], up_rgb.shape[0]))
+        filled = up_rgb.copy()
+        filled[up_hole] = upsampled[up_hole]
+        filled = _smooth_hole(filled, up_hole, 4)
+    return filled
+
+def clean_background(source_rgba, mask_rgba):
+    """Quita las piezas ya recortadas y rellena esa zona con la escena de alrededor."""
+    np = _need_numpy()
+    if Image is None:
+        raise RuntimeError('Falta Pillow.')
+    source_rgba = source_rgba.convert('RGBA')
+    mask_rgba = mask_rgba.convert('RGBA')
+    if mask_rgba.size != source_rgba.size:
+        resample = Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST
+        mask_rgba = mask_rgba.resize(source_rgba.size, resample)
+    alpha = np.asarray(mask_rgba)[:, :, 3]
+    hole = _dilate_bool(alpha > 16, 3)
+    ratio = float(hole.mean()) if hole.size else 0.0
+    if ratio < 0.002:
+        raise RuntimeError('No hay piezas recortadas para retirar del fondo.')
+    if ratio > 0.72:
+        raise RuntimeError('Las piezas cubren casi toda la imagen; no queda escena suficiente para reconstruir el fondo.')
+    src = np.asarray(source_rgba.convert('RGB'), np.float32)
+    filled = _pyramid_fill(src, hole)
+    rgb = np.asarray(source_rgba.convert('RGB')).copy()
+    rgb[hole] = np.clip(filled[hole], 0, 255).astype(np.uint8)
+    opaque = np.full(hole.shape, 255, np.uint8)
+    return Image.fromarray(np.dstack([rgb, opaque]), 'RGBA')
 
 def decode_data(data):
  if not isinstance(data,str) or ',' not in data: raise ValueError('Imagen no válida')
@@ -358,48 +657,31 @@ class Handler(SimpleHTTPRequestHandler):
     except Exception as e: return self.send_json(502,{'error':str(e)})
     return self.send_json(200,result)
    if self.path=='/api/remove-background':
-    global _REMBG_SESSION
     try:
      if Image is None: return self.send_json(503,{'ok':False,'error':'Falta Pillow. Instala las dependencias del proyecto.'})
-     try:
-      from rembg import remove, new_session
-     except Exception as imp_err:
-      return self.send_json(503,{'ok':False,'error':'No se pudo cargar rembg/onnxruntime. Ejecuta INSTALAR_DEPENDENCIAS.bat, espera a que termine sin errores y reinicia GAMEB Studio. Detalle: '+str(imp_err)[:180]})
      head,raw=decode_data(data.get('image',''))
      if len(raw)>15*1024*1024: return self.send_json(413,{'ok':False,'error':'El recorte supera 15 MB.'})
      source=Image.open(io.BytesIO(raw)).convert('RGBA')
      if source.width < 2 or source.height < 2: return self.send_json(400,{'ok':False,'error':'El recorte está vacío o sus dimensiones no son válidas.'})
-     session = _get_rembg_session(new_session)
-     # Primero intenta alpha matting para mejorar bordes finos y semitransparentes.
-     # Si pymatting no está disponible o falla, usa la máscara estándar sin bloquear el flujo.
-     engine='rembg-u2net-alpha-matting'
-     try:
-      result=remove(source, session=session, alpha_matting=True,
-                    alpha_matting_foreground_threshold=240,
-                    alpha_matting_background_threshold=10,
-                    alpha_matting_erode_size=10)
-     except Exception:
-      engine='rembg-u2net-standard-fallback'
-      result=remove(source, session=session, alpha_matting=False)
-     if not isinstance(result,Image.Image): result=Image.open(io.BytesIO(result)).convert('RGBA')
-     else: result=result.convert('RGBA')
-     result=result.convert('RGBA')
-     # Refinamiento conservador de alfa: suaviza solo el borde para evitar dientes
-     # sin recortar la pieza ni cambiar sus dimensiones originales.
-     try:
-      from PIL import ImageFilter
-      alpha=result.getchannel('A')
-      alpha=alpha.filter(ImageFilter.GaussianBlur(radius=0.45))
-      result.putalpha(alpha)
-     except Exception: pass
-     alpha=result.getchannel('A')
-     extrema=alpha.getextrema()
-     if extrema[1] < 8:
-      raise RuntimeError('La máscara quedó prácticamente vacía; no se exportó una silueta incorrecta.')
+     result,info=_segment_cutout(source, data.get('inner'))
      out=io.BytesIO();result.save(out,format='PNG',optimize=True)
      encoded=base64.b64encode(out.getvalue()).decode('ascii')
-     return self.send_json(200,{'ok':True,'image':'data:image/png;base64,'+encoded,'width':result.width,'height':result.height,'engine':engine,'alphaMatting':engine.endswith('alpha-matting')})
+     return self.send_json(200,{'ok':True,'image':'data:image/png;base64,'+encoded,'width':result.width,'height':result.height,'trimX':info.get('trimX',0),'trimY':info.get('trimY',0),'engine':info.get('engine',''),'removedFragments':info.get('removedFragments',0),'alphaMatting':False})
     except Exception as e: return self.send_json(502,{'ok':False,'error':'Falló la segmentación: '+str(e)[:300]})
+   if self.path=='/api/clean-background':
+    try:
+     if Image is None: return self.send_json(503,{'ok':False,'error':'Falta Pillow. Instala las dependencias del proyecto.'})
+     head,raw=decode_data(data.get('image',''))
+     if len(raw)>30*1024*1024: return self.send_json(413,{'ok':False,'error':'La imagen del fondo supera el tamaño permitido.'})
+     source=Image.open(io.BytesIO(raw)).convert('RGBA')
+     _,mraw=decode_data(data.get('mask',''))
+     if len(mraw)>30*1024*1024: return self.send_json(413,{'ok':False,'error':'La máscara del fondo supera el tamaño permitido.'})
+     mask=Image.open(io.BytesIO(mraw)).convert('RGBA')
+     result=clean_background(source, mask)
+     out=io.BytesIO();result.save(out,format='PNG',optimize=True)
+     encoded=base64.b64encode(out.getvalue()).decode('ascii')
+     return self.send_json(200,{'ok':True,'image':'data:image/png;base64,'+encoded,'width':result.width,'height':result.height})
+    except Exception as e: return self.send_json(502,{'ok':False,'error':'No se pudo reconstruir el fondo: '+str(e)[:300]})
    if self.path=='/api/inspect-crop':
     try:
      result=inspect_crop_with_openai(str(data.get('image','')),str(data.get('name',''))[:120],str(data.get('category',''))[:80],str(data.get('notes',''))[:1200])
@@ -479,5 +761,5 @@ class Handler(SimpleHTTPRequestHandler):
   return super().do_GET()
 
 def main():
- port=int(os.environ.get('GAMEB_PORT','8766'));print(f'GAMEB Studio Núcleo IA V2: http://127.0.0.1:{port}');print('Conexión ChatGPT:', 'credenciales guardadas' if read_credentials().get('access_token') else 'pendiente de iniciar sesión');print('API key de respaldo:', 'configurada' if os.environ.get('OPENAI_API_KEY') else 'no configurada');ThreadingHTTPServer(('127.0.0.1',port),Handler).serve_forever()
+ port=int(os.environ.get('GAMEB_PORT','8766'));print(f'GAMEB Studio Núcleo IA V2: http://127.0.0.1:{port}');print('Conexión ChatGPT:', 'credenciales guardadas' if read_credentials().get('access_token') else 'pendiente de iniciar sesión');print('API key de respaldo:', 'configurada' if os.environ.get('OPENAI_API_KEY') else 'no configurada');threading.Thread(target=_warm_segmenter,daemon=True).start();ThreadingHTTPServer(('127.0.0.1',port),Handler).serve_forever()
 if __name__=='__main__': main()
