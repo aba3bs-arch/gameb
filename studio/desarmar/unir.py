@@ -1,20 +1,21 @@
 """El programa arma el título. El modelo no decide el rectángulo final."""
 
 TITLE_LAWS = '''Leyes del título, para cualquier boceto:
-1. Un título es un solo letrero. Lee todas las palabras del nombre. Si hay más de una, la misma caja las cubre todas. Está prohibido encerrar solo la palabra más grande o la de más contraste.
-2. La caja empieza antes de la primera letra y termina después de la última, de izquierda a derecha y de arriba a abajo.
-3. Incluye lo que forma parte del mismo letrero aunque no sea letra: sombrero, corona, marco, cinta, flores, resplandor, sombra y adornos de arriba o de los lados.
-4. No incluyas jackpots, cifras de premio, símbolos, personajes ni el paisaje. Si un adorno toca un jackpot, la caja llega hasta el adorno y no se traga el jackpot.
-5. Si la caja corta una palabra o deja fuera un adorno del mismo letrero, hay que ampliarla. No la reduzcas a una sola palabra.'''
+1. Un título es un solo letrero o un solo logo. Puede ser texto, un dibujo, o las dos cosas. No depende de un juego ni de un adorno concreto.
+2. Si hay palabras legibles, la misma caja las cubre todas. Está prohibido encerrar solo la palabra más grande o la de más contraste.
+3. Si no hay palabras, el título es la imagen completa: escudo, mascota, símbolo o letras que no se separan.
+4. Incluye lo que forma parte del mismo letrero aunque no sea letra: marco, cinta, corona, flores, resplandor, sombra o cualquier adorno pegado al logo.
+5. No incluyas jackpots, cifras de premio, símbolos sueltos, personajes ajenos ni el paisaje. Si un adorno toca otra pieza, la caja llega hasta el adorno y no se traga esa pieza.
+6. Si la caja corta una palabra o deja fuera una parte del mismo logo, hay que ampliarla.'''
 
-LEER_TITULO = '''Cómo devolver un título:
-- No calcules el rectángulo final del letrero. El programa une las partes.
+LEER_TITULO = '''Cómo devolver un título, sea cual sea el boceto:
+- No calcules el rectángulo final. El programa une las partes.
 - En cada componente de tipo "Título / logo" el campo parts es obligatorio.
-- Cada palabra es {"text":"PALABRA","role":"palabra","x":0,"y":0,"w":0,"h":0,"missing":false}.
-- Cada adorno del mismo letrero es {"text":"sombrero","role":"adorno","x":0,"y":0,"w":0,"h":0,"missing":false}.
-- x, y, w y h son píxeles de la imagen original y cubren solo esa palabra o ese adorno.
+- Cada palabra legible es {"text":"PALABRA","role":"palabra","x":0,"y":0,"w":0,"h":0,"missing":false}.
+- Si el título es un dibujo sin palabras, no inventes palabras. Una parte {"text":"logo","role":"imagen","x":0,"y":0,"w":0,"h":0,"missing":false} cubre el logo completo. Si el dibujo tiene piezas separadas, cada una lleva role imagen o adorno y su propia caja.
+- x, y, w y h de cada parte son píxeles de la imagen original y cubren solo esa parte.
 - Si una palabra se ve y no puedes fijar su caja, inclúyela con missing true. No la omitas y no inventes la caja.
-- Los campos x, y, w y h del componente título no se usan como letrero.'''
+- Los campos x, y, w y h del componente se usan solo cuando el título es una imagen y no hay partes.'''
 
 
 def _is_title_kind(value):
@@ -111,8 +112,17 @@ def _parts_of(component):
     return collected
 
 
+_ROLES_IMAGEN = {'adorno', 'ornament', 'ornamento', 'imagen', 'figura', 'dibujo', 'logo'}
+
+
+def _caja_del_componente(component, width, height):
+    if not isinstance(component, dict):
+        return None
+    return _part_box(component, width, height)
+
+
 def unir_titulo(component, width, height):
-    """Une la caja de cada palabra. Si falta una palabra, el título no se registra."""
+    """Une las partes del título. Con palabras, no puede faltar ninguna. Sin palabras, el título es la imagen."""
     words = []
     ornaments = []
     boxes = []
@@ -123,16 +133,21 @@ def unir_titulo(component, width, height):
             continue
         role = str(part.get('role') or 'palabra').strip().lower()
         text = str(part.get('text') or part.get('name') or '').strip()[:40]
-        if not text:
-            continue
         box = _part_box(part, width, height)
-        ornament = role in ('adorno', 'ornament', 'ornamento')
-        if ornament:
+        graphic = role in _ROLES_IMAGEN
+        if not text:
+            if graphic and box:
+                text = 'imagen'
+            else:
+                continue
+        if graphic:
             ornaments.append(text)
             if box:
                 boxes.append(box)
             else:
                 missing_ornaments.append(text)
+        elif role in ('cifra', 'numero', 'número', 'monto', 'cantidad'):
+            continue
         else:
             words.append(text)
             if box:
@@ -148,9 +163,25 @@ def unir_titulo(component, width, height):
         'titleReason': '',
     }
     if not words:
-        result['titleFailed'] = True
-        result['skipSave'] = True
-        result['titleReason'] = 'El título no trajo la lista de palabras. No se armó el letrero ni se registró.'
+        if not boxes:
+            caja = _caja_del_componente(component, width, height)
+            if caja and caja[2] * caja[3] <= 0.72 * width * height:
+                boxes.append(caja)
+                ornaments.append('logo')
+            else:
+                result['titleFailed'] = True
+                result['skipSave'] = True
+                result['titleReason'] = 'El título es una imagen y no tiene una caja usable. No se registró.'
+                return result
+        x, y, w, h = _union(boxes)
+        if w * h > 0.72 * width * height:
+            result['titleFailed'] = True
+            result['skipSave'] = True
+            result['titleReason'] = 'La unión del título cubre casi toda la escena. No se registró.'
+            return result
+        result.update({'x': x, 'y': y, 'w': w, 'h': h, 'titleOrnaments': ornaments[:8] or ['logo']})
+        detail = ', '.join(ornaments) if ornaments else 'logo'
+        result['titleReason'] = 'Título de imagen unido: ' + detail + '.'
         return result
     if missing_words:
         result['titleFailed'] = True

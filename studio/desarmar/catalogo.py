@@ -4,17 +4,17 @@ import re
 from studio.desarmar.fondo import _pyramid_fill
 from studio.desarmar.recortar import Image, _dilate_bool, _need_numpy
 
-CATALOGO = '''Lámina de salida, para cualquier boceto:
+CATALOGO = '''Lámina de salida, para cualquier boceto. No busques las piezas de un juego fijo: usa solo lo que se ve.
 - Un objeto, un PNG. No agrupes botones, símbolos ni placas.
 - Fondo: un solo componente, id fondo_principal, tipo Fondo. Es la escena completa, sin título, placas, símbolos, marco ni botones.
-- Título: id titulo_ y el nombre del juego. Las palabras y adornos siguen en parts.
-- Marco de rodillos: un solo componente, id marco_rodillos. El campo hole es la ventana interior, sin el marco. El centro del PNG queda transparente. hole usa x, y, w, h en píxeles de la imagen.
-- Jackpots: cuatro placas si se ven, id jackpot_grand, jackpot_major, jackpot_minor, jackpot_mini. La caja es la placa con su palabra. El monto no es un componente: va en parts con role cifra y el programa lo borra.
-- Paneles de apuesta, créditos y ganancia: id panel_apuesta, panel_creditos, panel_ganancia. La cifra también va en parts con role cifra.
-- Símbolos: uno por dibujo, id simbolo_ y el nombre (simbolo_charro, simbolo_calavera).
-- Botones: uno por control, id boton_info, boton_menos, boton_mas, boton_turbo, boton_girar.
-- Los letreros de líneas sí llevan su texto. Son tipo Contador, id indicador_lineas_izq e indicador_lineas_der. No uses role cifra en ellos.
-- role cifra solo marca montos como $100,000 o 500.00. Nunca la palabra GRAND, MAJOR, MINOR, MINI, APUESTA, CREDITOS o GANANCIA.'''
+- Título: puede ser letras, un dibujo o las dos cosas. id titulo_ y el nombre visible. Si no hay palabras, una parte role imagen cubre el logo.
+- Marco de rodillos, solo si el boceto tiene rodillos: id marco_rodillos. hole es la ventana interior. El centro del PNG queda transparente.
+- Cada placa de premio es un Jackpot con id jackpot_ y su nombre. grand, major, minor y mini son ejemplos, no una lista cerrada. El monto va en parts con role cifra y el programa lo borra.
+- Cada panel lleva id panel_ y su nombre. La cifra también va en parts con role cifra.
+- Cada símbolo lleva id simbolo_ y el nombre del dibujo que se ve.
+- Cada botón lleva id boton_ y su nombre.
+- Un letrero de líneas, si se ve, es tipo Contador e id indicador_lineas_izq o indicador_lineas_der. No uses role cifra en él.
+- role cifra solo marca montos. Nunca una palabra del título ni el nombre de una placa.'''
 
 _FOLDS = str.maketrans('áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN')
 _ROLES_CIFRA = {'cifra', 'numero', 'número', 'monto', 'cantidad'}
@@ -169,9 +169,14 @@ def _nombre(comp):
         ):
             if _tiene(blob, tier):
                 return filename
+        rest = re.sub(r'(^|_)jackpot(_|$)', '_', texto).strip('_')
+        return 'jackpot_' + (_sin_repetidos(rest) or 'placa')
     for word, filename in (('apuesta', 'panel_apuesta'), ('credito', 'panel_creditos'), ('ganancia', 'panel_ganancia')):
         if _tiene(blob, word) and (str(comp.get('type') or '') in ('Panel', 'Contador', 'Jackpot') or _tiene(blob, 'panel') or _tiene(blob, 'contador')):
             return filename
+    if str(comp.get('type') or '') == 'Panel' or _tiene(blob, 'panel'):
+        rest = re.sub(r'(^|_)panel(_|$)', '_', texto).strip('_')
+        return 'panel_' + (_sin_repetidos(rest) or 'placa')
     if _tiene(blob, 'linea'):
         return 'indicador_lineas'
     if str(comp.get('type') or '') == 'Botón' or _tiene(blob, 'boton'):
@@ -188,7 +193,7 @@ def _nombre(comp):
         if words:
             return 'titulo_' + _slug('_'.join(words))
         rest = texto
-        for stop in ('letrero', 'titulo', 'logotipo', 'logo', 'con', 'sombrero', 'adorno', 'adornos', 'y'):
+        for stop in ('letrero', 'titulo', 'logotipo', 'logo'):
             rest = re.sub(rf'(^|_){stop}(_|$)', '_', '_' + rest + '_')
         rest = _sin_repetidos(re.sub(r'_+', '_', rest).strip('_'))
         return 'titulo_' + (rest or 'logo')

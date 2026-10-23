@@ -17,6 +17,8 @@ class CatalogoTest(unittest.TestCase):
     def test_nombra_la_lamina_y_quita_la_cifra_de_la_placa(self):
         comps = [
             _pieza(id='titulo', name='Letrero TIERRA MEXICANA', type='Título / logo', x=100, y=0, w=400, h=120, titleWords=['TIERRA', 'MEXICANA']),
+            _pieza(id='logo_dragon', name='Dragón de fuego', type='Título / logo', x=100, y=140, w=200, h=80),
+            _pieza(id='oro', name='Oro', type='Jackpot', x=500, y=20, w=140, h=70),
             _pieza(id='jackpot_grand', name='Jackpot GRAND', type='Jackpot', x=10, y=20, w=220, h=90, _parts=[
                 {'text': '$100,000.00', 'role': 'cifra', 'x': 40, 'y': 60, 'w': 140, 'h': 28},
             ]),
@@ -36,6 +38,8 @@ class CatalogoTest(unittest.TestCase):
         quedaron, notes = preparar_catalogo(comps, 800, 600)
         nombres = [comp['fileName'] for comp in quedaron]
         self.assertIn('titulo_tierra_mexicana', nombres)
+        self.assertIn('titulo_dragon_de_fuego', nombres)
+        self.assertIn('jackpot_oro', nombres)
         self.assertIn('jackpot_grand', nombres)
         self.assertIn('jackpot_major', nombres)
         self.assertIn('marco_rodillos', nombres)

@@ -68,8 +68,24 @@ class TitleReviewTest(unittest.TestCase):
         self.assertEqual(united['x'], 150)
         self.assertNotEqual(united['w'], 180)
 
-    def test_sin_palabras_no_adopta_el_rectangulo_del_modelo(self):
+    def test_un_logo_sin_palabras_usa_su_caja(self):
         united = unir_titulo({'x': 400, 'y': 0, 'w': 180, 'h': 70, 'parts': []}, 1000, 600)
+        self.assertFalse(united['titleFailed'])
+        self.assertFalse(united['skipSave'])
+        self.assertEqual(united['titleWords'], [])
+        self.assertEqual((united['x'], united['y'], united['w'], united['h']), (400, 0, 180, 70))
+
+    def test_un_dibujo_sin_palabras_une_sus_partes(self):
+        united = unir_titulo({'x': 10, 'y': 10, 'w': 400, 'h': 200, 'parts': [
+            {'text': 'escudo', 'role': 'imagen', 'x': 80, 'y': 12, 'w': 140, 'h': 90},
+            {'text': 'corona', 'role': 'adorno', 'x': 110, 'y': 2, 'w': 70, 'h': 28},
+        ]}, 1000, 600)
+        self.assertFalse(united['titleFailed'])
+        self.assertEqual(united['titleWords'], [])
+        self.assertEqual((united['x'], united['y'], united['w'], united['h']), (80, 2, 140, 100))
+
+    def test_un_logo_sin_caja_usable_no_se_registra(self):
+        united = unir_titulo({'x': 0, 'y': 0, 'w': 900, 'h': 560, 'parts': []}, 1000, 600)
         self.assertTrue(united['titleFailed'])
         self.assertTrue(united['skipSave'])
         self.assertNotIn('x', united)
