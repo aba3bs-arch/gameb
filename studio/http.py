@@ -164,7 +164,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     port = int(os.environ.get('GAMEB_PORT', '8766'))
-    print(f'GAMEB Studio Núcleo IA V2: http://127.0.0.1:{port}')
+    print(f'GAMEB Studio VERSION NUEVA: http://127.0.0.1:{port}')
     print('Conexión ChatGPT:', 'credenciales guardadas' if read_credentials().get('access_token') else 'pendiente de iniciar sesión')
     print('API key de respaldo:', 'configurada' if os.environ.get('OPENAI_API_KEY') else 'no configurada')
     threading.Thread(target=_warm_segmenter, daemon=True).start()
