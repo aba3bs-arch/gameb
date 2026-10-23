@@ -1,0 +1,426 @@
+{
+  "juego": "Tierra Mexicana",
+  "tamano_fuente": [
+    1536,
+    1024
+  ],
+  "simbolos": [
+    {
+      "id": "senora",
+      "archivo": "simbolos/senora.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 258,
+        "y": 270,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "charro",
+      "archivo": "simbolos/charro.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 464,
+        "y": 270,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "calendario",
+      "archivo": "simbolos/calendario.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 672,
+        "y": 270,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "calavera",
+      "archivo": "simbolos/calavera.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 880,
+        "y": 270,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "cactus",
+      "archivo": "simbolos/cactus.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 1086,
+        "y": 270,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "aguila",
+      "archivo": "simbolos/aguila.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 258,
+        "y": 458,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "chiles",
+      "archivo": "simbolos/chiles.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 464,
+        "y": 458,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "piramide",
+      "archivo": "simbolos/piramide.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 672,
+        "y": 458,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "sarape",
+      "archivo": "simbolos/sarape.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 880,
+        "y": 458,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "tequila",
+      "archivo": "simbolos/tequila.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 258,
+        "y": 648,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "pinata",
+      "archivo": "simbolos/pinata.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 672,
+        "y": 648,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "nopal",
+      "archivo": "simbolos/nopal.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 880,
+        "y": 648,
+        "w": 192,
+        "h": 178
+      }
+    },
+    {
+      "id": "hibisco",
+      "archivo": "simbolos/hibisco.png",
+      "ancho": 192,
+      "alto": 178,
+      "recorte": {
+        "x": 1086,
+        "y": 648,
+        "w": 192,
+        "h": 178
+      }
+    }
+  ],
+  "personajes": [
+    {
+      "id": "mariachi",
+      "archivo": "personajes/mariachi.png",
+      "ancho": 252,
+      "alto": 770,
+      "recorte": {
+        "x": 0,
+        "y": 100,
+        "w": 252,
+        "h": 770
+      }
+    },
+    {
+      "id": "china-poblana",
+      "archivo": "personajes/china-poblana.png",
+      "ancho": 252,
+      "alto": 780,
+      "recorte": {
+        "x": 1284,
+        "y": 100,
+        "w": 252,
+        "h": 780
+      }
+    }
+  ],
+  "ui": [
+    {
+      "id": "logo-tierra-mexicana",
+      "archivo": "ui/logo-tierra-mexicana.png",
+      "ancho": 510,
+      "alto": 192,
+      "recorte": {
+        "x": 520,
+        "y": 18,
+        "w": 510,
+        "h": 192
+      }
+    },
+    {
+      "id": "jackpot-grand",
+      "archivo": "ui/jackpot-grand.png",
+      "ancho": 258,
+      "alto": 116,
+      "recorte": {
+        "x": 242,
+        "y": 34,
+        "w": 258,
+        "h": 116
+      }
+    },
+    {
+      "id": "jackpot-major",
+      "archivo": "ui/jackpot-major.png",
+      "ancho": 255,
+      "alto": 116,
+      "recorte": {
+        "x": 1055,
+        "y": 34,
+        "w": 255,
+        "h": 116
+      }
+    },
+    {
+      "id": "jackpot-minor",
+      "archivo": "ui/jackpot-minor.png",
+      "ancho": 243,
+      "alto": 93,
+      "recorte": {
+        "x": 255,
+        "y": 152,
+        "w": 243,
+        "h": 93
+      }
+    },
+    {
+      "id": "jackpot-mini",
+      "archivo": "ui/jackpot-mini.png",
+      "ancho": 273,
+      "alto": 92,
+      "recorte": {
+        "x": 1062,
+        "y": 158,
+        "w": 273,
+        "h": 92
+      }
+    },
+    {
+      "id": "badge-20-lineas",
+      "archivo": "ui/badge-20-lineas.png",
+      "ancho": 87,
+      "alto": 100,
+      "recorte": {
+        "x": 1288,
+        "y": 490,
+        "w": 87,
+        "h": 100
+      }
+    },
+    {
+      "id": "boton-info",
+      "archivo": "ui/boton-info.png",
+      "ancho": 90,
+      "alto": 80,
+      "recorte": {
+        "x": 55,
+        "y": 888,
+        "w": 90,
+        "h": 80
+      }
+    },
+    {
+      "id": "boton-menos",
+      "archivo": "ui/boton-menos.png",
+      "ancho": 85,
+      "alto": 80,
+      "recorte": {
+        "x": 145,
+        "y": 888,
+        "w": 85,
+        "h": 80
+      }
+    },
+    {
+      "id": "boton-mas",
+      "archivo": "ui/boton-mas.png",
+      "ancho": 90,
+      "alto": 80,
+      "recorte": {
+        "x": 385,
+        "y": 888,
+        "w": 90,
+        "h": 80
+      }
+    },
+    {
+      "id": "panel-apuesta",
+      "archivo": "ui/panel-apuesta.png",
+      "ancho": 438,
+      "alto": 100,
+      "recorte": {
+        "x": 50,
+        "y": 872,
+        "w": 438,
+        "h": 100
+      }
+    },
+    {
+      "id": "panel-creditos",
+      "archivo": "ui/panel-creditos.png",
+      "ancho": 274,
+      "alto": 100,
+      "recorte": {
+        "x": 488,
+        "y": 872,
+        "w": 274,
+        "h": 100
+      }
+    },
+    {
+      "id": "panel-ganancia",
+      "archivo": "ui/panel-ganancia.png",
+      "ancho": 286,
+      "alto": 100,
+      "recorte": {
+        "x": 762,
+        "y": 872,
+        "w": 286,
+        "h": 100
+      }
+    },
+    {
+      "id": "boton-turbo",
+      "archivo": "ui/boton-turbo.png",
+      "ancho": 143,
+      "alto": 82,
+      "recorte": {
+        "x": 1055,
+        "y": 888,
+        "w": 143,
+        "h": 82
+      }
+    },
+    {
+      "id": "boton-girar",
+      "archivo": "ui/boton-girar.png",
+      "ancho": 272,
+      "alto": 90,
+      "recorte": {
+        "x": 1210,
+        "y": 882,
+        "w": 272,
+        "h": 90
+      }
+    },
+    {
+      "id": "consola",
+      "archivo": "ui/consola.png",
+      "ancho": 1440,
+      "alto": 107,
+      "recorte": {
+        "x": 50,
+        "y": 868,
+        "w": 1440,
+        "h": 107
+      }
+    }
+  ],
+  "escena": [
+    {
+      "id": "fondo",
+      "archivo": "escena/fondo.png",
+      "ancho": 1536,
+      "alto": 1024,
+      "recorte": {
+        "x": 0,
+        "y": 0,
+        "w": 1536,
+        "h": 1024
+      }
+    },
+    {
+      "id": "flores",
+      "archivo": "escena/flores.png",
+      "ancho": 1536,
+      "alto": 32,
+      "recorte": {
+        "x": 0,
+        "y": 992,
+        "w": 1536,
+        "h": 32
+      }
+    }
+  ],
+  "rodillos": {
+    "columnas": 5,
+    "filas": 3,
+    "celdas": [
+      [
+        "senora",
+        "charro",
+        "calendario",
+        "calavera",
+        "cactus"
+      ],
+      [
+        "aguila",
+        "chiles",
+        "piramide",
+        "sarape",
+        "senora"
+      ],
+      [
+        "tequila",
+        "charro",
+        "pinata",
+        "nopal",
+        "hibisco"
+      ]
+    ]
+  }
+}
