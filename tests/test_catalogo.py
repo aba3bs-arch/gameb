@@ -81,6 +81,43 @@ class CatalogoTest(unittest.TestCase):
         self.assertGreater(int(arr[2, 2, 3]), 200)
         self.assertGreater(int(arr[2, 2, 0]), 180)
 
+    def test_vacia_el_monto_del_jackpot_y_conserva_la_palabra(self):
+        imagen = Image.new('RGBA', (220, 110), (150, 24, 32, 255))
+        draw = imagen.load()
+        for index in range(5):
+            x0 = 28 + index * 34
+            for y in range(16, 40):
+                for x in range(x0, x0 + 18):
+                    draw[x, y] = (245, 220, 120, 255)
+        for index in range(8):
+            x0 = 24 + index * 22
+            for y in range(62, 92):
+                for x in range(x0, x0 + 12):
+                    draw[x, y] = (245, 220, 120, 255)
+        limpio = np.array(aplicar_lamina(imagen, kind='Jackpot'))
+        self.assertGreater(int(limpio[28, 36, 0]), 200)
+        self.assertGreater(int(limpio[28, 36, 1]), 160)
+        self.assertGreater(int(limpio[76, 30, 0]), 120)
+        self.assertLess(int(limpio[76, 30, 1]), 90)
+        self.assertEqual(int(limpio[76, 30, 3]), 255)
+
+    def test_los_jackpot_del_juego_quedan_sin_monto(self):
+        for nombre, palabra, monto in (
+            ('assets/ui/jackpot-grand.png', (15, 42, 70, 200), (55, 95, 20, 240)),
+            ('assets/ui/jackpot-major.png', (15, 42, 70, 200), (55, 95, 20, 230)),
+            ('assets/ui/jackpot-minor.png', (6, 32, 60, 190), (42, 78, 20, 220)),
+        ):
+            imagen = Image.open(nombre).convert('RGBA')
+            salida = np.array(aplicar_lamina(imagen, kind='Jackpot').convert('RGB'))
+            self.assertGreater(self._oro(salida, palabra), 200)
+            self.assertLess(self._oro(salida, monto), 30)
+
+    @staticmethod
+    def _oro(arr, band):
+        y0, y1, x0, x1 = band
+        zona = arr[y0:y1, x0:x1]
+        return int(((zona[:, :, 0] > 170) & (zona[:, :, 1] > 120) & (zona[:, :, 0] > zona[:, :, 2] + 40)).sum())
+
     def test_borra_la_cifra_y_deja_el_color_de_la_placa(self):
         arr = np.zeros((40, 80, 4), np.uint8)
         arr[:, :] = (180, 20, 30, 255)

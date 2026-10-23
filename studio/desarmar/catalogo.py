@@ -2,7 +2,7 @@
 import re
 
 from studio.desarmar.fondo import _pyramid_fill
-from studio.desarmar.recortar import Image, _dilate_bool, _need_numpy
+from studio.desarmar.recortar import Image, _dilate_bool, _label_components, _need_numpy
 
 CATALOGO = '''Lámina de salida, para cualquier boceto. No busques las piezas de un juego fijo: usa solo lo que se ve.
 - Un objeto, un PNG. No agrupes botones, símbolos ni placas.
@@ -343,22 +343,119 @@ def vaciar_hueco(image, hole):
     return Image.fromarray(arr, 'RGBA')
 
 
-def borrar_cifras(image, boxes):
-    """Rellena el monto con el color de la placa. La placa sigue opaca."""
+def _tinta_interior(rgb, alpha):
+    """Píxeles de letra o número dentro de la placa, lejos del marco."""
     np = _need_numpy()
-    if Image is None or not boxes:
+    h, w = rgb.shape[:2]
+    visible = alpha > 16
+    mx = max(2, int(round(w * 0.05)))
+    my = max(2, int(round(h * 0.03)))
+    inner = np.zeros((h, w), dtype=bool)
+    if h > my * 2 + 4 and w > mx * 2 + 4:
+        inner[my:h - my, mx:w - mx] = True
+    inner &= visible
+    small_w, small_h = max(8, w // 8), max(8, h // 8)
+    resample = Image.Resampling.BILINEAR if hasattr(Image, 'Resampling') else Image.BILINEAR
+    blur = np.asarray(Image.fromarray(rgb, 'RGB').resize((small_w, small_h), resample).resize((w, h), resample), np.int16)
+    diff = np.max(np.abs(rgb.astype(np.int16) - blur), axis=2)
+    lum = rgb.astype(np.float32).mean(axis=2)
+    return inner & (diff > 32) & (lum > 70)
+
+
+def _glifos(ink):
+    np = _need_numpy()
+    h, w = ink.shape
+    labels, count = _label_components(ink)
+    glyphs = []
+    for index in range(1, count + 1):
+        ys, xs = np.nonzero(labels == index)
+        if len(xs) < 18:
+            continue
+        x0, x1 = int(xs.min()), int(xs.max())
+        y0, y1 = int(ys.min()), int(ys.max())
+        gw, gh = x1 - x0 + 1, y1 - y0 + 1
+        if gh < h * 0.09 or gh > h * 0.5:
+            continue
+        if gw < max(2, w * 0.012) or gw > w * 0.26:
+            continue
+        if gw > gh * 2.4:
+            continue
+        glyphs.append({'x': x0, 'y': y0, 'w': gw, 'h': gh, 'cy': (y0 + y1) / 2.0, 'i': index})
+    return glyphs, labels
+
+
+def _lineas_de_glifos(glyphs):
+    if not glyphs:
+        return []
+    np = _need_numpy()
+    ordered = sorted(glyphs, key=lambda glyph: glyph['cy'])
+    gap = max(6.0, float(np.median([glyph['h'] for glyph in ordered])) * 0.5)
+    lines = [[ordered[0]]]
+    for glyph in ordered[1:]:
+        if glyph['cy'] - lines[-1][-1]['cy'] > gap:
+            lines.append([glyph])
+        else:
+            lines[-1].append(glyph)
+    return lines
+
+
+def _lineas_de_monto(lines, height):
+    """La palabra queda arriba. Las líneas de abajo, con varios signos, son el monto."""
+    principales = [line for line in lines if len(line) >= 3]
+    if not principales:
+        return []
+    if len(principales) == 1:
+        line = principales[0]
+        cy = sum(glyph['cy'] for glyph in line) / len(line)
+        if len(line) >= 6 and cy > height * 0.45:
+            return [line]
+        return []
+    return [line for line in principales[1:] if len(line) >= 4]
+
+
+def detectar_numeros(image):
+    """Máscara de los números interiores. La palabra de la placa no entra."""
+    np = _need_numpy()
+    arr = np.array(image.convert('RGBA'))
+    ink = _tinta_interior(arr[:, :, :3], arr[:, :, 3])
+    glyphs, labels = _glifos(ink)
+    lines = _lineas_de_monto(_lineas_de_glifos(glyphs), arr.shape[0])
+    mask = np.zeros(arr.shape[:2], dtype=bool)
+    for line in lines:
+        y0 = max(0, min(glyph['y'] for glyph in line) - 2)
+        y1 = min(arr.shape[0], max(glyph['y'] + glyph['h'] for glyph in line) + 3)
+        x0 = max(0, min(glyph['x'] for glyph in line) - 2)
+        x1 = min(arr.shape[1], max(glyph['x'] + glyph['w'] for glyph in line) + 2)
+        banda = np.zeros(mask.shape, dtype=bool)
+        banda[y0:y1, x0:x1] = ink[y0:y1, x0:x1]
+        for glyph in line:
+            banda |= labels == glyph['i']
+        mask |= banda
+    if np.any(mask):
+        mask = _dilate_bool(mask, 2)
+    return mask
+
+
+def borrar_cifras(image, boxes, detectar=False):
+    """Rellena el monto con el color de la placa. La palabra y el marco se quedan."""
+    np = _need_numpy()
+    if Image is None:
         return image
     arr = np.array(image.convert('RGBA'))
     hole = np.zeros(arr.shape[:2], dtype=bool)
-    for box in boxes:
+    for box in boxes or []:
         local = _desplazar(box, 0, 0, arr.shape[1], arr.shape[0])
         if local is None:
             continue
         hole[local['y']:local['y'] + local['h'], local['x']:local['x'] + local['w']] = True
+    if detectar:
+        hole |= detectar_numeros(image)
     if not np.any(hole):
         return image
     hole = _dilate_bool(hole, 1)
-    if float(hole.mean()) > 0.72:
+    visible = arr[:, :, 3] > 16
+    hole &= visible
+    if not np.any(hole) or float(hole.mean()) > 0.45:
         return image
     filled = _pyramid_fill(arr[:, :, :3].astype(np.float32), hole)
     arr[:, :, :3][hole] = np.clip(filled[hole], 0, 255).astype(np.uint8)
@@ -377,6 +474,7 @@ def aplicar_lamina(image, trim_x=0, trim_y=0, hole=None, erase=None, kind=''):
         local = _desplazar(box, trim_x, trim_y, width, height)
         if local:
             boxes.append(local)
-    if boxes:
-        image = borrar_cifras(image, boxes)
+    es_jackpot = 'jackpot' in str(kind or '').lower()
+    if boxes or es_jackpot:
+        image = borrar_cifras(image, boxes, detectar=es_jackpot)
     return image
