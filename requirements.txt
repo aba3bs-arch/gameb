@@ -1,0 +1,4 @@
+PyJWT[crypto]>=2.10.0,<3.0.0
+# Motor de segmentacion de siluetas con transparencia alfa
+rembg[cpu]>=2.0.60,<3.0.0
+onnxruntime>=1.20.0
