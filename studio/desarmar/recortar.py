@@ -159,43 +159,122 @@ def _keep_components(alpha, inner):
     removed = int(count - int(np.count_nonzero(keep[1:])))
     return cleaned, removed
 
-def _defringe(src, out):
-    """Recupera el color del borde para que no quede un halo del fondo."""
+def _spread_color(rgb, seeds, steps):
+    """Lleva el color de una zona hacia los píxeles vecinos, sin mezclar el otro lado."""
     np = _need_numpy()
-    alpha = out[:, :, 3]
-    transparent = alpha < 12
-    if int(np.count_nonzero(transparent)) >= 8:
-        bg = np.median(src[:, :, :3][transparent], axis=0)
-    else:
-        corners = np.stack([src[0, 0, :3], src[0, -1, :3], src[-1, 0, :3], src[-1, -1, :3]])
-        bg = np.median(corners, axis=0)
-    a = alpha.astype(np.float32) / 255.0
-    rgb = out[:, :, :3].astype(np.float32)
-    edge = (alpha > 0) & (alpha < 248)
-    if np.any(edge):
-        unmixed = (rgb - bg * (1.0 - a)[..., None]) / np.maximum(a, 0.12)[..., None]
-        rgb[edge] = np.clip(unmixed[edge], 0, 255)
-        out[:, :, :3] = rgb.astype(np.uint8)
-    opaque = alpha > 240
-    interior = opaque.copy()
-    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
-        interior &= _shift_bool(opaque, dy, dx)
-    rim = opaque & ~interior
-    if not np.any(rim) or not np.any(interior):
-        return
-    color = out[:, :, :3].copy()
-    known = interior
-    for _ in range(2):
-        nxt = color.copy()
-        nxt_known = known.copy()
+    color = np.zeros(rgb.shape, np.float32)
+    known = seeds.copy()
+    color[known] = rgb[known]
+    for _ in range(steps):
+        acc = np.zeros_like(color)
+        count = np.zeros(color.shape[:2], np.float32)
         for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            shifted = _shift_color(color, dy, dx)
             shifted_known = _shift_bool(known, dy, dx)
-            take = rim & ~nxt_known & shifted_known
-            nxt[take] = shifted[take]
-            nxt_known |= take
-        color, known = nxt, nxt_known
-    out[:, :, :3][rim] = color[rim]
+            acc += _shift_color(color, dy, dx) * shifted_known[..., None]
+            count += shifted_known
+        fill = ~known & (count > 0)
+        if not np.any(fill):
+            break
+        color[fill] = acc[fill] / count[fill, None]
+        known |= fill
+    return color, known
+
+
+def _peel_background(rgb_src, rgb_cut, alpha, limit=18):
+    """Quita el fondo que la máscara marcó como sólido, si sigue el color de afuera.
+
+    El color de referencia sale del boceto, justo donde ya no hay máscara. Se compara
+    con el color guardado en el recorte: un anillo de otro color, o un borde ya mezclado,
+    no se camina. Un hueco interior solo entra si el recorte sigue siendo fondo.
+    """
+    np = _need_numpy()
+    from collections import deque
+    h, w = alpha.shape
+    transparent = alpha < 16
+    target = alpha >= 16
+    touch = np.zeros((h, w), dtype=bool)
+    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        touch |= _shift_bool(target, dy, dx)
+    seeds = transparent & touch
+    seen = transparent.copy()
+    eaten = np.zeros((h, w), dtype=bool)
+    ref = np.zeros((h, w, 3), np.int16)
+    ys, xs = np.nonzero(seeds)
+    ref[ys, xs] = rgb_src[ys, xs]
+    cut = rgb_cut.astype(np.int16)
+    queue = deque(zip(ys.tolist(), xs.tolist()))
+    while queue:
+        y, x = queue.popleft()
+        base = ref[y, x]
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if ny < 0 or nx < 0 or ny >= h or nx >= w or seen[ny, nx] or not target[ny, nx]:
+                continue
+            if int(np.max(np.abs(cut[ny, nx] - base))) > limit:
+                continue
+            seen[ny, nx] = True
+            eaten[ny, nx] = True
+            ref[ny, nx] = base
+            queue.append((ny, nx))
+    return eaten
+
+
+def _defringe(src, out):
+    """El borde usa el fondo de al lado y el color del objeto. La alfa es solo la mezcla real.
+
+    El color observado es el del recorte (ahí está la mezcla). Donde la máscara ya es
+    transparente se mira el boceto, para no rellenar un hueco con un borde inventado.
+    Cada pasada lee ese color original: si se guardara ya el color limpio, la siguiente
+    pasada vería cobertura total y volvería el borde opaco.
+    """
+    np = _need_numpy()
+    rgb_src = src[:, :, :3]
+    observed = out[:, :, :3].copy()
+    alpha = out[:, :, 3]
+    if int(np.count_nonzero(alpha < 16)) >= 8 and np.any(alpha >= 16):
+        eaten = _peel_background(rgb_src, observed, alpha)
+        out[:, :, 3][eaten] = 0
+    for _ in range(4):
+        alpha = out[:, :, 3]
+        before = alpha.copy()
+        transparent = alpha < 16
+        if int(np.count_nonzero(transparent)) < 8:
+            break
+        opaque = alpha >= 240
+        interior = opaque.copy()
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)):
+            interior &= _shift_bool(opaque, dy, dx)
+        if not np.any(interior):
+            break
+        bg, bg_known = _spread_color(rgb_src, transparent, 6)
+        fg, fg_known = _spread_color(observed, interior, 6)
+        near = np.zeros(alpha.shape, dtype=bool)
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            near |= _shift_bool(alpha >= 16, dy, dx)
+        candidate = ((alpha >= 16) | (transparent & near)) & bg_known & fg_known & ~interior
+        if not np.any(candidate):
+            break
+        diff = fg - bg
+        denom = np.sum(diff * diff, axis=2)
+        safe = denom > 64.0
+        obs = observed.astype(np.float32)
+        obs[transparent] = rgb_src[transparent]
+        numer = np.sum((obs - bg) * diff, axis=2)
+        coverage = np.zeros(alpha.shape, np.float32)
+        np.divide(numer, denom, out=coverage, where=safe)
+        np.clip(coverage, 0, 1, out=coverage)
+        new_a = alpha.astype(np.float32)
+        inside = candidate & (alpha >= 16) & safe
+        new_a[inside & (coverage < 0.12)] = 0
+        partial = inside & (coverage >= 0.12) & (coverage < 0.88)
+        new_a[partial] = coverage[partial] * 255.0
+        new_a[inside & (coverage >= 0.88)] = 255
+        outside = candidate & (alpha < 16) & safe & (coverage > 0.22) & (coverage < 0.9)
+        new_a[outside] = coverage[outside] * 255.0
+        paint = (partial | outside | (inside & (coverage >= 0.88))) & safe
+        out[:, :, :3][paint] = np.clip(fg[paint], 0, 255).astype(np.uint8)
+        out[:, :, 3] = np.clip(new_a, 0, 255).astype(np.uint8)
+        if np.array_equal(out[:, :, 3], before) and not np.any(outside):
+            break
 
 def refine_cutout(source_rgba, cutout_rgba, inner=None):
     """Limpia la máscara: quita vecinos, el halo y el margen vacío."""
@@ -212,11 +291,11 @@ def refine_cutout(source_rgba, cutout_rgba, inner=None):
     h, w = out.shape[:2]
     alpha, removed = _keep_components(out[:, :, 3], _parse_inner(inner, w, h))
     alpha = alpha.copy()
-    alpha[alpha < 12] = 0
     if int(np.max(alpha)) < 8:
         raise RuntimeError('La máscara quedó prácticamente vacía; no se exportó una silueta incorrecta.')
     out[:, :, 3] = alpha
     _defringe(src, out)
+    out[:, :, 3][out[:, :, 3] < 12] = 0
     out[out[:, :, 3] == 0, :3] = 0
     image = Image.fromarray(out, 'RGBA')
     ys, xs = np.nonzero(out[:, :, 3] > 8)

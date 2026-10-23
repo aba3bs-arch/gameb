@@ -53,6 +53,26 @@ class RefineCutoutTest(unittest.TestCase):
         blue_fringe = (arr[:, :, 2] > 150) & (arr[:, :, 0] < 80) & (arr[:, :, 3] > 16)
         self.assertLess(int(blue_fringe.sum()), 15)
 
+    def test_quita_el_halo_opaco_del_color_del_fondo(self):
+        w, h = 180, 140
+        src = np.zeros((h, w, 4), np.uint8)
+        src[:, :] = (20, 90, 210, 255)
+        yy, xx = np.ogrid[:h, :w]
+        red = (xx - 90) ** 2 + (yy - 70) ** 2 <= 32 ** 2
+        src[red] = (220, 30, 40, 255)
+        source = Image.fromarray(src, 'RGBA')
+        cut = np.zeros((h, w, 4), np.uint8)
+        blue_ring = ((xx - 90) ** 2 + (yy - 70) ** 2 <= 46 ** 2) & ~red
+        cut[red] = (220, 30, 40, 255)
+        cut[blue_ring] = (20, 90, 210, 255)
+        refined, _info = refine_cutout(source, Image.fromarray(cut, 'RGBA'), {'x': 40, 'y': 20, 'w': 100, 'h': 100})
+        arr = np.array(refined)
+        blue = (arr[:, :, 2] > 150) & (arr[:, :, 0] < 80) & (arr[:, :, 3] > 16)
+        self.assertLess(int(blue.sum()), 15)
+        cy, cx = arr.shape[0] // 2, arr.shape[1] // 2
+        self.assertGreater(int(arr[cy, cx, 0]), 180)
+        self.assertGreater(int(arr[cy, cx, 3]), 240)
+
     def test_conserva_el_hueco_interior(self):
         source = Image.new('RGBA', (80, 80), (10, 120, 40, 255))
         cut = np.zeros((80, 80, 4), np.uint8)
