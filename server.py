@@ -233,7 +233,7 @@ def refine_cutout(source_rgba, cutout_rgba, inner=None):
     trimmed = image.crop((x0, y0, x1, y1))
     return trimmed, {'removedFragments': removed, 'trimX': x0, 'trimY': y0, 'width': trimmed.width, 'height': trimmed.height}
 
-def _segment_cutout(source, inner):
+def _segment_cutout(source, inner, kind=''):
     try:
         from rembg import remove, new_session
     except Exception as imp_err:
@@ -245,7 +245,11 @@ def _segment_cutout(source, inner):
             raw = remove(source, session=session, alpha_matting=False, post_process_mask=False)
             if not isinstance(raw, Image.Image):
                 raw = Image.open(io.BytesIO(raw)).convert('RGBA')
-            refined, info = refine_cutout(source, raw.convert('RGBA'), inner)
+            raw = raw.convert('RGBA')
+            parsed_inner = _parse_inner(inner, source.width, source.height)
+            if _is_title_kind(kind):
+                raw = _restore_title_letters(source, raw, parsed_inner)
+            refined, info = refine_cutout(source, raw, inner)
             info['engine'] = model
             return refined, info
         except Exception as exc:
@@ -486,6 +490,116 @@ def openai_response(payload, token):
   raise RuntimeError('La solicitud a ChatGPT tardó más de 60 segundos y se canceló. Revisa tu internet y vuelve a intentar.')
  except urllib.error.URLError as e:
   raise RuntimeError('No se pudo conectar con ChatGPT: '+str(getattr(e,'reason',e)))
+TITLE_LAWS = '''Leyes del título, para cualquier boceto:
+1. Un título es un solo letrero. Lee todas las palabras del nombre. Si hay más de una, la misma caja las cubre todas. Está prohibido encerrar solo la palabra más grande o la de más contraste.
+2. La caja empieza antes de la primera letra y termina después de la última, de izquierda a derecha y de arriba a abajo.
+3. Incluye lo que forma parte del mismo letrero aunque no sea letra: sombrero, corona, marco, cinta, flores, resplandor, sombra y adornos de arriba o de los lados.
+4. No incluyas jackpots, cifras de premio, símbolos, personajes ni el paisaje. Si un adorno toca un jackpot, la caja llega hasta el adorno y no se traga el jackpot.
+5. Si la caja corta una palabra o deja fuera un adorno del mismo letrero, hay que ampliarla. No la reduzcas a una sola palabra.'''
+
+def _is_title_kind(value):
+    text=str(value or '').lower()
+    return 'título' in text or 'titulo' in text or 'logo' in text or 'letrero' in text
+
+def apply_title_review(current, proposal, width, height):
+    """Acepta una caja de título solo si crece alrededor de la propuesta y no se traga la escena."""
+    try:
+        x=int(float(proposal.get('x'))); y=int(float(proposal.get('y'))); w=int(float(proposal.get('w'))); h=int(float(proposal.get('h')))
+    except (TypeError, ValueError):
+        return None
+    if width < 2 or height < 2 or w < 2 or h < 2:
+        return None
+    x=max(0, min(width-1, x)); y=max(0, min(height-1, y))
+    w=max(1, min(width-x, w)); h=max(1, min(height-y, h))
+    cx, cy, cw, ch = int(current['x']), int(current['y']), int(current['w']), int(current['h'])
+    if w * h > 0.72 * width * height:
+        return None
+    if w < cw * 0.98 or h < ch * 0.85:
+        return None
+    ix=max(0, min(x+w, cx+cw) - max(x, cx))
+    iy=max(0, min(y+h, cy+ch) - max(y, cy))
+    if cw * ch <= 0 or (ix * iy) / float(cw * ch) < 0.8:
+        return None
+    words=proposal.get('words') if isinstance(proposal.get('words'), list) else []
+    ornaments=proposal.get('ornaments') if isinstance(proposal.get('ornaments'), list) else []
+    return {'x':x,'y':y,'w':w,'h':h,'titleWords':[str(v)[:40] for v in words[:8] if str(v).strip()],'titleOrnaments':[str(v)[:40] for v in ornaments[:8] if str(v).strip()],'titleReviewed':True}
+
+def _png_data_url(image):
+    buf=io.BytesIO()
+    image.save(buf, format='PNG')
+    return 'data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode('ascii')
+
+def review_title_box(source, comp, token):
+    """Pide a la IA que lea el letrero completo y corrija la caja si falta una palabra o un adorno."""
+    if Image is None:
+        return None
+    from PIL import ImageDraw
+    W, H = source.size
+    x, y, w, h = int(comp['x']), int(comp['y']), int(comp['w']), int(comp['h'])
+    scale = min(1.0, 1600 / max(W, H))
+    shown = source.convert('RGB')
+    if scale < 1:
+        resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+        shown = shown.resize((max(1, int(round(W * scale))), max(1, int(round(H * scale)))), resample)
+    draw = ImageDraw.Draw(shown)
+    sx, sy, sw, sh = [int(round(v * scale)) for v in (x, y, w, h)]
+    for n in range(4):
+        draw.rectangle([sx - n, sy - n, sx + sw + n, sy + sh + n], outline=(255, 0, 200))
+    pad_x, pad_up, pad_down = int(w * 0.55), int(h * 0.75), int(h * 0.35)
+    zx, zy = max(0, x - pad_x), max(0, y - pad_up)
+    zw, zh = min(W - zx, w + pad_x * 2), min(H - zy, h + pad_up + pad_down)
+    zoom = source.convert('RGB').crop((zx, zy, zx + max(1, zw), zy + max(1, zh)))
+    if max(zoom.size) > 1280:
+        zscale = 1280 / max(zoom.size)
+        resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+        zoom = zoom.resize((max(1, int(zoom.width * zscale)), max(1, int(zoom.height * zscale))), resample)
+    model = choose_model(token)
+    prompt = TITLE_LAWS + f'''
+La primera imagen es el boceto completo, mostrado a {shown.width}x{shown.height} píxeles. El rectángulo magenta es la caja propuesta del título.
+La segunda imagen es un acercamiento solo para leer las letras. No calcules coordenadas con el acercamiento.
+Devuelve SOLO JSON: {{"words":["palabra"],"ornaments":["adorno"],"complete":false,"x":0,"y":0,"w":0,"h":0,"reason":"qué faltaba"}}.
+x, y, w y h son píxeles de la primera imagen, la que tiene el rectángulo. Deben cubrir el letrero entero.'''
+    body={'model':model,'input':[{'role':'user','content':[
+        {'type':'input_text','text':prompt},
+        {'type':'input_image','image_url':_png_data_url(shown),'detail':'high'},
+        {'type':'input_image','image_url':_png_data_url(zoom),'detail':'high'},
+    ]}],'text':{'format':{'type':'json_object'}}}
+    parsed=json.loads(openai_response(body, token))
+    if scale < 1 and isinstance(parsed, dict):
+        for key in ('x','y','w','h'):
+            if key in parsed:
+                try: parsed[key] = float(parsed[key]) / scale
+                except (TypeError, ValueError): pass
+    return apply_title_review(comp, parsed, W, H)
+
+def _restore_title_letters(source, cutout, inner):
+    """Si el recorte se quedó solo con una palabra, recupera las letras que siguen dentro de la caja."""
+    np = _need_numpy()
+    src = np.array(source.convert('RGBA'))
+    out = np.array(cutout.convert('RGBA'))
+    if src.shape[:2] != out.shape[:2]:
+        return cutout
+    ix, iy, iw, ih = inner
+    region = out[iy:iy+ih, ix:ix+iw, 3]
+    if iw < 4 or ih < 4 or region.size == 0:
+        return cutout
+    covered = float(np.any(region > 32, axis=0).mean())
+    if covered >= 0.72:
+        return cutout
+    rgb = src[:, :, :3].astype(np.int16)
+    small_w, small_h = max(8, src.shape[1] // 12), max(8, src.shape[0] // 12)
+    resample = Image.Resampling.BILINEAR if hasattr(Image, 'Resampling') else Image.BILINEAR
+    blur = np.asarray(Image.fromarray(src[:, :, :3], 'RGB').resize((small_w, small_h), resample).resize((src.shape[1], src.shape[0]), resample), np.int16)
+    differ = np.max(np.abs(rgb - blur), axis=2) > 34
+    keep = np.zeros(differ.shape, dtype=bool)
+    keep[iy:iy+ih, ix:ix+iw] = differ[iy:iy+ih, ix:ix+iw]
+    if int(np.count_nonzero(keep)) < 30:
+        return cutout
+    out[:, :, 3] = np.maximum(out[:, :, 3], np.where(keep, 255, 0).astype(np.uint8))
+    restored = out[:, :, 3] > 32
+    out[restored, :3] = src[restored, :3]
+    return Image.fromarray(out, 'RGBA')
+
 def analyze_with_openai(image_data, name, cols, rows, notes):
  token=access_token()
  auth_mode='chatgpt'
@@ -495,7 +609,7 @@ def analyze_with_openai(image_data, name, cols, rows, notes):
   token=key;auth_mode='api'
  head,raw=decode_data(image_data)
  mime=head.split(':',1)[1].split(';',1)[0] if head.startswith('data:') else 'image/png'
- prompt=f"""Actúa como un sistema profesional de segmentación de assets para videojuegos. Analiza toda la imagen primero e identifica cada componente visible por separado. Devuelve SOLO JSON válido con shape {{"summary":"...","components":[{{"id":"snake_case","name":"nombre español","type":"Fondo|Título / logo|Marco de rodillos|Símbolo|Jackpot|Botón|Contador|Panel|Bonus|Decoración|Efecto|Otro","x":int,"y":int,"w":int,"h":int,"confidence":0.0}}]}}. Coordenadas en píxeles de la imagen original. REGLAS OBLIGATORIAS: (1) Si dos objetos se tocan o están muy juntos, NO los unas en una sola pieza: crea una caja independiente por objeto, aunque sus cajas se solapen un poco. (2) La caja debe abarcar el COMPONENTE VISUAL COMPLETO, no solo el texto o la parte central: para títulos/logos tipo letrero incluye letras, marco ornamental, flores, sombreros, puntas, sombras y decoración superior e inferior que formen parte del mismo letrero. Primero localiza el objeto semánticamente y luego estima sus límites externos; no uses el rectángulo ajustado a las letras como caja del letrero. Deja margen de análisis de 4-8% del tamaño del objeto cuando haya espacio. Nunca cortes la silueta para evitar al vecino. (2a) En títulos grandes, compara los extremos superiores/inferiores y laterales del marco completo; si los adornos sobresalen de la zona de texto, deben quedar dentro de la misma caja del título. No incluyas jackpots vecinos ni el paisaje detrás. (3) No uses una caja enorme que incluya varios componentes distintos. (4) Identifica y separa primero las piezas de primer plano (títulos, jackpots, símbolos, botones, marcos, números y adornos); trata el fondo/escena como una capa independiente al final. (5) En grupos de símbolos repetidos, devuelve una caja por símbolo si sus límites son discernibles; no combines símbolos adyacentes. (6) Si una frontera no puede determinarse con seguridad, conserva la caja individual más razonable y baja confidence; explica la incertidumbre en summary en vez de fusionar objetos. (6a) Antes de devolver el JSON, realiza una segunda comprobación de cada caja: ¿incluye todo el contorno decorativo visible del componente o solo su contenido central? Corrige la caja si faltan puntas, marco o adornos. La caja es provisional; la máscara se valida después y no se debe declarar completa solo porque el objeto fue identificado. (7) No inventes píxeles ocultos ni digas que reconstruiste lo tapado. Detecta fondo, título, marco, símbolos, jackpots, botones, contadores, paneles y bonus cuando sean visibles. Columna/filas esperadas {cols}x{rows}. Nombre del juego: {name or 'sin nombre'}. Notas adicionales: {notes}. Máximo 80 componentes. Si la imagen es boceto, identifica regiones propuestas, no afirmes que son PNG ya extraídos."""
+ prompt=f"""Actúa como un sistema profesional de segmentación de assets para videojuegos. Analiza toda la imagen primero e identifica cada componente visible por separado. Devuelve SOLO JSON válido con shape {{"summary":"...","components":[{{"id":"snake_case","name":"nombre español","type":"Fondo|Título / logo|Marco de rodillos|Símbolo|Jackpot|Botón|Contador|Panel|Bonus|Decoración|Efecto|Otro","x":int,"y":int,"w":int,"h":int,"confidence":0.0}}]}}. Coordenadas en píxeles de la imagen original. {TITLE_LAWS} REGLAS OBLIGATORIAS: (1) Si dos objetos se tocan o están muy juntos, NO los unas en una sola pieza: crea una caja independiente por objeto, aunque sus cajas se solapen un poco. El título es la excepción: todas sus palabras y sus adornos van en una sola caja. (2) La caja debe abarcar el COMPONENTE VISUAL COMPLETO, no solo el texto o la parte central. (3) No uses una caja enorme que incluya varios componentes distintos. (4) Identifica y separa primero las piezas de primer plano; trata el fondo/escena como una capa independiente al final. (5) En grupos de símbolos repetidos, devuelve una caja por símbolo. (6) Si una frontera no puede determinarse con seguridad, conserva la caja individual más razonable y baja confidence. (7) No inventes píxeles ocultos. Columna/filas esperadas {cols}x{rows}. Nombre del juego: {name or 'sin nombre'}. Notas adicionales: {notes}. Máximo 80 componentes. Si la imagen es boceto, identifica regiones propuestas, no afirmes que son PNG ya extraídos."""
  body={'model':choose_model(token),'input':[{'role':'user','content':[{'type':'input_text','text':prompt},{'type':'input_image','image_url':image_data,'detail':'high'}]}],'text':{'format':{'type':'json_object'}}}
  outtext=openai_response(body,token)
  parsed=json.loads(outtext)
@@ -508,11 +622,31 @@ def analyze_with_openai(image_data, name, cols, rows, notes):
    x=max(0,min(W,int(c.get('x',0))));y=max(0,min(H,int(c.get('y',0))));w=max(1,min(W-x,int(c.get('w',1))));h=max(1,min(H-y,int(c.get('h',1))))
    comps.append({'id':re.sub('[^a-zA-Z0-9_]+','_',str(c.get('id') or f'component_{i+1}')).strip('_')[:60] or f'component_{i+1}','name':str(c.get('name') or f'Componente {i+1}')[:100],'type':c.get('type') if c.get('type') in ['Fondo','Título / logo','Marco de rodillos','Símbolo','Jackpot','Botón','Contador','Panel','Bonus','Decoración','Efecto','Otro'] else 'Otro','x':x,'y':y,'w':w,'h':h,'confidence':max(0,min(1,float(c.get('confidence',.5))))})
   except Exception: pass
- return {'summary':str(parsed.get('summary','Análisis terminado. Revisa todas las cajas antes de extraer.')),'components':comps,'aiUsed':True,'authMode':auth_mode,'imageWidth':W,'imageHeight':H}
+ summary=str(parsed.get('summary','Análisis terminado. Revisa todas las cajas antes de extraer.'))
+ if Image:
+  try: source_im=Image.open(io.BytesIO(raw)).convert('RGB')
+  except Exception: source_im=None
+ else: source_im=None
+ title_notes=[]; reviewed=0
+ if source_im is not None:
+  for comp in comps:
+   if reviewed>=2 or not (_is_title_kind(comp.get('type')) or _is_title_kind(comp.get('name'))): continue
+   reviewed+=1
+   try: updated=review_title_box(source_im, comp, token)
+   except Exception as exc:
+    title_notes.append('No se pudo revisar el título «'+comp['name']+'»: '+str(exc)[:140]); continue
+   if not updated:
+    title_notes.append('El título «'+comp['name']+'» conservó la caja inicial porque la corrección no era válida.'); continue
+   comp.update(updated)
+   words=' '.join(updated.get('titleWords') or []) or 'sin palabras leídas'
+   ornaments=', '.join(updated.get('titleOrnaments') or [])
+   title_notes.append('Título «'+comp['name']+'» leído: '+words+('. Adornos: '+ornaments if ornaments else '')+'.')
+ if title_notes: summary=summary+' '+ ' '.join(title_notes)
+ return {'summary':summary,'components':comps,'aiUsed':True,'authMode':auth_mode,'imageWidth':W,'imageHeight':H}
 
 
 
-def inspect_crop_with_openai(image_data, name, category, notes):
+def inspect_crop_with_openai(image_data, name, category, notes, original_image=''):
  token=access_token()
  auth_mode='chatgpt'
  if not token:
@@ -522,9 +656,16 @@ def inspect_crop_with_openai(image_data, name, category, notes):
    raise RuntimeError('La inspección IA necesita una sesión de ChatGPT compatible o OPENAI_API_KEY configurada en el servidor. El recorte no se envió ni se modificó.')
  head,raw=decode_data(image_data)
  mime=head.split(':',1)[1].split(';',1)[0] if head.startswith('data:') else 'image/png'
- prompt=f'''Eres un inspector visual de componentes gráficos para videojuegos. Examina ÚNICAMENTE el recorte adjunto, no imagines detalles que no se ven. Nombre: {name or 'Componente sin nombre'}. Categoría declarada: {category or 'Sin categoría'}. Instrucciones del usuario: {notes or 'Revisión general de calidad visual'}.
+ title_check=_is_title_kind(category) or _is_title_kind(name)
+ original_ok=bool(original_image) and isinstance(original_image,str) and original_image.startswith('data:image')
+ prompt=f'''Eres un inspector visual de componentes gráficos para videojuegos. Nombre: {name or 'Componente sin nombre'}. Categoría declarada: {category or 'Sin categoría'}. Instrucciones del usuario: {notes or 'Revisión general de calidad visual'}.
+{TITLE_LAWS if title_check else ''}
+{'La primera imagen es el boceto completo y la segunda es el recorte del título. Compara las dos. Si en el boceto el letrero tiene una palabra o un adorno que no está en el recorte, es un defecto de severidad Alta y ready_to_register debe ser false.' if title_check and original_ok else 'Examina el recorte adjunto, no imagines detalles que no se ven.'}
 Busca problemas que sí sean visibles: bordes cortados, restos de fondo, halos, manchas, transparencias accidentales, deformación, desenfoque, baja resolución, márgenes desiguales, partes faltantes, texto/números residuales o elementos ajenos. Distingue defectos confirmados de posibles riesgos. Si el fondo cuadriculado/transparente no puede deducirse con certeza de la imagen, dilo. No cambies ni reconstruyas la imagen. Devuelve SOLO JSON válido con esta forma exacta: {{"summary":"resumen en español","quality":"Correcto|Revisar|Defectos detectados","issues":[{{"severity":"Alta|Media|Baja|Observación","title":"problema breve","detail":"qué se ve y dónde","recommendation":"acción concreta sin alterar el diseño original"}}],"strengths":["aspecto que está bien"],"ready_to_register":false,"confidence":0.0}}. Incluye máximo 8 problemas, evita falsos positivos y usa lista vacía si no encuentras problemas claros. ready_to_register debe ser true solo si no hay defectos relevantes visibles; la decisión final siempre pertenece al usuario.'''
- body={'model':choose_model(token),'input':[{'role':'user','content':[{'type':'input_text','text':prompt},{'type':'input_image','image_url':image_data,'detail':'high'}]}],'text':{'format':{'type':'json_object'}}}
+ content=[{'type':'input_text','text':prompt}]
+ if title_check and original_ok: content.append({'type':'input_image','image_url':original_image,'detail':'high'})
+ content.append({'type':'input_image','image_url':image_data,'detail':'high'})
+ body={'model':choose_model(token),'input':[{'role':'user','content':content}],'text':{'format':{'type':'json_object'}}}
  parsed=json.loads(openai_response(body,token))
  issues=parsed.get('issues',[])
  if not isinstance(issues,list): issues=[]
@@ -663,7 +804,7 @@ class Handler(SimpleHTTPRequestHandler):
      if len(raw)>15*1024*1024: return self.send_json(413,{'ok':False,'error':'El recorte supera 15 MB.'})
      source=Image.open(io.BytesIO(raw)).convert('RGBA')
      if source.width < 2 or source.height < 2: return self.send_json(400,{'ok':False,'error':'El recorte está vacío o sus dimensiones no son válidas.'})
-     result,info=_segment_cutout(source, data.get('inner'))
+     result,info=_segment_cutout(source, data.get('inner'), str(data.get('kind') or '')[:40])
      out=io.BytesIO();result.save(out,format='PNG',optimize=True)
      encoded=base64.b64encode(out.getvalue()).decode('ascii')
      return self.send_json(200,{'ok':True,'image':'data:image/png;base64,'+encoded,'width':result.width,'height':result.height,'trimX':info.get('trimX',0),'trimY':info.get('trimY',0),'engine':info.get('engine',''),'removedFragments':info.get('removedFragments',0),'alphaMatting':False})
@@ -684,7 +825,9 @@ class Handler(SimpleHTTPRequestHandler):
     except Exception as e: return self.send_json(502,{'ok':False,'error':'No se pudo reconstruir el fondo: '+str(e)[:300]})
    if self.path=='/api/inspect-crop':
     try:
-     result=inspect_crop_with_openai(str(data.get('image','')),str(data.get('name',''))[:120],str(data.get('category',''))[:80],str(data.get('notes',''))[:1200])
+     original=str(data.get('original') or '')
+     if len(original)>8_000_000: original=''
+     result=inspect_crop_with_openai(str(data.get('image','')),str(data.get('name',''))[:120],str(data.get('category',''))[:80],str(data.get('notes',''))[:1200],original)
      return self.send_json(200,result)
     except Exception as e:
      return self.send_json(502,{'ok':False,'error':str(e)})
