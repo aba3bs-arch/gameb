@@ -4,7 +4,12 @@ from PIL import Image, ImageDraw
 import numpy as np
 
 from studio.desarmar.fondo import clean_background
-from studio.desarmar.recortar import refine_cutout
+from studio.desarmar.recortar import (
+    _drawing_disappeared,
+    _restore_title_letters,
+    _should_restore,
+    refine_cutout,
+)
 
 
 def _circle(draw, box, color):
@@ -79,6 +84,25 @@ class RefineCutoutTest(unittest.TestCase):
         self.assertGreater(center[1], 70)
         # Fuera del hueco, el degradado original se conserva.
         self.assertEqual(int(out[10, 10, 0]), 20)
+
+    def test_recupera_el_panel_cuando_la_mascara_es_una_mancha(self):
+        source = Image.new('RGBA', (240, 120), (20, 40, 120, 255))
+        px = source.load()
+        for y in range(30, 90):
+            for x in range(40, 200):
+                px[x, y] = (230, 160, 30, 255)
+        cut = np.zeros((120, 240, 4), np.uint8)
+        cut[55:62, 70:78] = (230, 160, 30, 255)
+        restored = _restore_title_letters(source, Image.fromarray(cut, 'RGBA'), (30, 20, 180, 80))
+        arr = np.array(restored)
+        self.assertGreater(int(np.count_nonzero(arr[30:90, 40:200, 3] > 200)), 8000)
+
+    def test_una_mancha_no_cuenta_como_pieza(self):
+        self.assertTrue(_should_restore('Jackpot', 0.05, 0.01))
+        self.assertTrue(_should_restore('Título / logo', 0.4, 0.35))
+        self.assertFalse(_should_restore('Símbolo', 0.9, 0.5))
+        self.assertTrue(_drawing_disappeared(0.01, (0, 0, 280, 120)))
+        self.assertFalse(_drawing_disappeared(0.4, (0, 0, 280, 120)))
 
 
 if __name__ == '__main__':

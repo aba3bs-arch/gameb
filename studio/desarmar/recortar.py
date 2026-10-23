@@ -244,8 +244,14 @@ def _segment_cutout(source, inner, kind=''):
                 raw = Image.open(io.BytesIO(raw)).convert('RGBA')
             raw = raw.convert('RGBA')
             parsed_inner = _parse_inner(inner, source.width, source.height)
-            if _is_title_kind(kind):
+            alpha = _need_numpy().array(raw)[:, :, 3]
+            cols, solid = _coverage(alpha, parsed_inner)
+            if _should_restore(kind, cols, solid):
                 raw = _restore_title_letters(source, raw, parsed_inner)
+                alpha = _need_numpy().array(raw)[:, :, 3]
+                cols, solid = _coverage(alpha, parsed_inner)
+            if _drawing_disappeared(solid, parsed_inner):
+                raise RuntimeError('La máscara borró casi todo el dibujo. No se guardó un PNG vacío.')
             refined, info = refine_cutout(source, raw, inner)
             info['engine'] = model
             return refined, info
@@ -253,8 +259,56 @@ def _segment_cutout(source, inner, kind=''):
             errors.append(model+': '+str(exc)[:160])
     raise RuntimeError('No se pudo separar la pieza. '+' | '.join(errors))
 
+def _coverage(alpha, inner):
+    """Ancho cubierto y área con dibujo opaco dentro de la caja original."""
+    np = _need_numpy()
+    ix, iy, iw, ih = inner
+    region = alpha[iy:iy + ih, ix:ix + iw]
+    if region.size == 0 or iw < 1 or ih < 1:
+        return 1.0, 1.0
+    cols = float(np.any(region > 32, axis=0).mean())
+    solid = float((region > 32).mean())
+    return cols, solid
+
+
+def _should_restore(kind, cols, solid):
+    """Una mancha no es una pieza. El título además tiene que cubrir todas sus palabras."""
+    if solid < 0.22:
+        return True
+    return _is_title_kind(kind) and cols < 0.72
+
+
+def _drawing_disappeared(solid, inner):
+    iw, ih = inner[2], inner[3]
+    return iw * ih >= 80 and solid < 0.06
+
+
+def _grow_same_color(color, seeds, limit=36):
+    """Extiende la mancha por el color plano del objeto, sin caminar un degradado."""
+    np = _need_numpy()
+    from collections import deque
+    h, w = seeds.shape
+    seen = seeds.copy()
+    ref = np.zeros((h, w, 3), np.int16)
+    ref[seeds] = color[seeds]
+    ys, xs = np.nonzero(seeds)
+    queue = deque(zip(ys.tolist(), xs.tolist()))
+    while queue:
+        y, x = queue.popleft()
+        base = ref[y, x]
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if ny < 0 or nx < 0 or ny >= h or nx >= w or seen[ny, nx]:
+                continue
+            if int(np.max(np.abs(color[ny, nx].astype(np.int16) - base))) > limit:
+                continue
+            seen[ny, nx] = True
+            ref[ny, nx] = base
+            queue.append((ny, nx))
+    return seen
+
+
 def _restore_title_letters(source, cutout, inner):
-    """Si el recorte se quedó solo con una palabra, recupera las letras que siguen dentro de la caja."""
+    """Si el recorte se quedó en una mancha, recupera el dibujo que sigue dentro de la caja."""
     np = _need_numpy()
     src = np.array(source.convert('RGBA'))
     out = np.array(cutout.convert('RGBA'))
@@ -264,18 +318,20 @@ def _restore_title_letters(source, cutout, inner):
     region = out[iy:iy+ih, ix:ix+iw, 3]
     if iw < 4 or ih < 4 or region.size == 0:
         return cutout
-    covered = float(np.any(region > 32, axis=0).mean())
-    if covered >= 0.72:
+    covered, solid = _coverage(out[:, :, 3], inner)
+    if covered >= 0.72 and solid >= 0.22:
         return cutout
     rgb = src[:, :, :3].astype(np.int16)
     small_w, small_h = max(8, src.shape[1] // 12), max(8, src.shape[0] // 12)
     resample = Image.Resampling.BILINEAR if hasattr(Image, 'Resampling') else Image.BILINEAR
     blur = np.asarray(Image.fromarray(src[:, :, :3], 'RGB').resize((small_w, small_h), resample).resize((src.shape[1], src.shape[0]), resample), np.int16)
     differ = np.max(np.abs(rgb - blur), axis=2) > 34
-    keep = np.zeros(differ.shape, dtype=bool)
-    keep[iy:iy+ih, ix:ix+iw] = differ[iy:iy+ih, ix:ix+iw]
-    if int(np.count_nonzero(keep)) < 30:
+    sub_seeds = differ[iy:iy+ih, ix:ix+iw]
+    if int(np.count_nonzero(sub_seeds)) < 30:
         return cutout
+    grown = _grow_same_color(src[iy:iy+ih, ix:ix+iw, :3], sub_seeds)
+    keep = np.zeros(differ.shape, dtype=bool)
+    keep[iy:iy+ih, ix:ix+iw] = grown
     out[:, :, 3] = np.maximum(out[:, :, 3], np.where(keep, 255, 0).astype(np.uint8))
     restored = out[:, :, 3] > 32
     out[restored, :3] = src[restored, :3]
