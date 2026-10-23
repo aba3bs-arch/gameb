@@ -36,6 +36,10 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def end_headers(self):
+        self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
     def translate_path(self, path):
         if urllib.parse.urlparse(path).path.startswith('/assets/'):
             asset = asset_path(path)
