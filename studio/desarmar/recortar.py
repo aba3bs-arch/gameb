@@ -1,4 +1,10 @@
-"""Recorte de cada pieza y recuperación de letras que la máscara se comió."""
+"""Recorte de cada pieza, para cualquier boceto.
+
+El fondo se deja entero. Una placa o un marco se suelta por el color del borde.
+Un símbolo entra como cuadrado solo si su contorno exterior es un rectángulo
+de lados rectos; el PNG es ese rectángulo, sin el paisaje de alrededor.
+Cualquier otro dibujo sigue su contorno. No se usa una figura concreta.
+"""
 import io, threading
 try:
     from PIL import Image
@@ -443,88 +449,59 @@ def _es_simbolo(kind):
     return 'simbolo' in text
 
 
-def _lado_recto(vals, fuerza, lado):
-    """Un lado de cuadrado cae casi en la misma fila o columna. Un círculo no."""
-    if len(vals) < 8:
-        return None
-    orden = sorted(range(len(vals)), key=lambda indice: vals[indice])
-    n = len(orden)
-    inicio = n // 5
-    centro = orden[inicio:max(inicio + 1, n - inicio)]
-    elegidos = [vals[indice] for indice in centro]
-    if max(elegidos) - min(elegidos) > max(3, int(lado * 0.06)):
-        return None
-    pos = int(round(sum(elegidos) / float(len(elegidos))))
-    media = sorted(fuerza)[len(fuerza) // 2]
-    return pos, media
-
-
 def _cuadrado_de_simbolo(rgb, inner):
-    """Si el contorno exterior es un cuadrado, devuelve ese rectángulo. Cualquier otro contorno no entra."""
+    """El cuadrado es un borde recto y continuo, no la caja de búsqueda ni un dibujo concreto."""
     np = _need_numpy()
-    if not isinstance(inner, dict) or rgb.ndim != 3:
+    if not isinstance(inner, dict) or getattr(rgb, 'ndim', 0) != 3:
         return None
     alto, ancho = rgb.shape[:2]
     ix, iy, iw, ih = _parse_inner(inner, ancho, alto)
-    if iw < 32 or ih < 32:
+    if iw < 32 or ih < 32 or alto < 16 or ancho < 16:
+        return None
+    margen_x = max(4, int(iw * 0.18))
+    margen_y = max(4, int(ih * 0.18))
+    x0, y0 = max(1, ix - margen_x), max(1, iy - margen_y)
+    x1, y1 = min(ancho - 1, ix + iw + margen_x), min(alto - 1, iy + ih + margen_y)
+    if x1 - x0 < 32 or y1 - y0 < 32:
         return None
     color = rgb.astype(np.int16)
-    x0, y0 = max(0, ix - 6), max(0, iy - 6)
-    x1, y1 = min(ancho, ix + iw + 6), min(alto, iy + ih + 6)
-    anillo = np.zeros((alto, ancho), dtype=bool)
-    anillo[y0:y1, x0:x1] = True
-    anillo[iy:iy + ih, ix:ix + iw] = False
-    if int(anillo.sum()) < 16:
+    salto_x = np.zeros((alto, ancho), np.float32)
+    salto_y = np.zeros((alto, ancho), np.float32)
+    salto_x[:, 1:] = np.max(np.abs(color[:, 1:] - color[:, :-1]), axis=2)
+    salto_y[1:, :] = np.max(np.abs(color[1:, :] - color[:-1, :]), axis=2)
+    columnas = salto_x[y0:y1, x0:x1].mean(axis=0)
+    filas = salto_y[y0:y1, x0:x1].mean(axis=1)
+    mitad_x, mitad_y = columnas.size // 2, filas.size // 2
+    if mitad_x < 8 or mitad_y < 8:
         return None
-    escena = np.median(color[anillo], axis=0)
-
-    def distinto(y, x):
-        return int(np.max(np.abs(color[y, x] - escena))) > 32
-
-    def barrer_vertical(hacia_derecha):
-        vals, fuerza = [], []
-        y_desde = iy + max(2, ih // 8)
-        y_hasta = iy + ih - max(2, ih // 8)
-        paso = max(1, (y_hasta - y_desde) // 24)
-        x_rango = range(ix, ix + iw // 2) if hacia_derecha else range(ix + iw - 1, ix + iw // 2, -1)
-        for y in range(y_desde, y_hasta, paso):
-            for x in x_rango:
-                if distinto(y, x):
-                    vals.append(x)
-                    fuerza.append(int(np.max(np.abs(color[y, x] - escena))))
-                    break
-        return vals, fuerza
-
-    def barrer_horizontal(hacia_abajo):
-        vals, fuerza = [], []
-        x_desde = ix + max(2, iw // 8)
-        x_hasta = ix + iw - max(2, iw // 8)
-        paso = max(1, (x_hasta - x_desde) // 24)
-        y_rango = range(iy, iy + ih // 2) if hacia_abajo else range(iy + ih - 1, iy + ih // 2, -1)
-        for x in range(x_desde, x_hasta, paso):
-            for y in y_rango:
-                if distinto(y, x):
-                    vals.append(y)
-                    fuerza.append(int(np.max(np.abs(color[y, x] - escena))))
-                    break
-        return vals, fuerza
-
-    lados = (
-        _lado_recto(*barrer_vertical(True), iw),
-        _lado_recto(*barrer_vertical(False), iw),
-        _lado_recto(*barrer_horizontal(True), ih),
-        _lado_recto(*barrer_horizontal(False), ih),
+    izquierda = int(np.argmax(columnas[:mitad_x]))
+    derecha = int(np.argmax(columnas[mitad_x:])) + mitad_x
+    arriba = int(np.argmax(filas[:mitad_y]))
+    abajo = int(np.argmax(filas[mitad_y:])) + mitad_y
+    fuerza_x = float(np.median(columnas))
+    fuerza_y = float(np.median(filas))
+    if min(float(columnas[izquierda]), float(columnas[derecha])) < max(36.0, fuerza_x * 2.0):
+        return None
+    if min(float(filas[arriba]), float(filas[abajo])) < max(36.0, fuerza_y * 2.0):
+        return None
+    if derecha - izquierda < 28 or abajo - arriba < 28:
+        return None
+    lado_izq = salto_x[y0 + arriba:y0 + abajo, x0 + izquierda]
+    lado_der = salto_x[y0 + arriba:y0 + abajo, x0 + derecha]
+    lado_arr = salto_y[y0 + arriba, x0 + izquierda:x0 + derecha]
+    lado_aba = salto_y[y0 + abajo, x0 + izquierda:x0 + derecha]
+    if min(lado_izq.size, lado_der.size, lado_arr.size, lado_aba.size) < 8:
+        return None
+    continuo = min(
+        float((lado_izq >= 30).mean()),
+        float((lado_der >= 30).mean()),
+        float((lado_arr >= 30).mean()),
+        float((lado_aba >= 30).mean()),
     )
-    if any(lado is None for lado in lados):
+    if continuo < 0.68:
         return None
-    izquierda, derecha, arriba, abajo = lados
-    if min(izquierda[1], derecha[1], arriba[1], abajo[1]) < 34:
-        return None
-    bx, by = izquierda[0], arriba[0]
-    bw = derecha[0] - bx + 1
-    bh = abajo[0] - by + 1
-    if bw < 28 or bh < 28:
-        return None
+    bx, by = x0 + izquierda, y0 + arriba
+    bw, bh = derecha - izquierda, abajo - arriba
     proporcion = bw / float(bh)
     if proporcion < 0.80 or proporcion > 1.25:
         return None

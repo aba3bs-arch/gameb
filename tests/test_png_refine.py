@@ -336,6 +336,32 @@ class RecortePorTipoTest(unittest.TestCase):
         self.assertEqual(int(verde.sum()), 0)
         self.assertLess(abs(arr.shape[0] - arr.shape[1]), 8)
 
+    def test_el_cuadrado_no_incluye_el_paisaje_de_alrededor(self):
+        ruido = np.zeros((180, 180, 3), np.uint8)
+        for y in range(180):
+            tono = 20 + (y * 3) % 50
+            ruido[y, :, 0] = tono
+            ruido[y, :, 1] = 30 + (y % 17)
+            ruido[y, :, 2] = 90 + (y % 29)
+        ruido[40:140, 40:140] = (180, 90, 30)
+        ruido[40:48, 40:140] = (230, 180, 40)
+        ruido[132:140, 40:140] = (230, 180, 40)
+        ruido[40:140, 40:48] = (230, 180, 40)
+        ruido[40:140, 132:140] = (230, 180, 40)
+        imagen = Image.fromarray(np.dstack([ruido, np.full((180, 180), 255, np.uint8)]), 'RGBA')
+        caja = {'x': 22, 'y': 22, 'w': 136, 'h': 136}
+        rect = _cuadrado_de_simbolo(np.array(imagen.convert('RGB')), caja)
+        self.assertIsNotNone(rect)
+        self.assertGreaterEqual(rect['x'], 36)
+        self.assertLessEqual(rect['x'], 44)
+        self.assertGreaterEqual(rect['w'], 96)
+        self.assertLessEqual(rect['w'], 104)
+        status, body = quitar_fondo({'image': self._png(imagen), 'kind': 'Símbolo simbolo_pieza', 'inner': caja})
+        self.assertEqual(status, 200)
+        self.assertEqual(body['engine'], 'cuadrado')
+        self.assertLess(body['width'], 120)
+        self.assertLess(body['height'], 120)
+
     def test_una_figura_redonda_no_se_trata_como_cuadrado(self):
         imagen = Image.new('RGBA', (140, 140), (20, 60, 140, 255))
         pixel = imagen.load()
