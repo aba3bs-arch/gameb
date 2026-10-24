@@ -13,7 +13,7 @@ LEER_TITULO = '''Cómo devolver un título, sea cual sea el boceto:
 - En cada componente de tipo "Título / logo" el campo parts es obligatorio.
 - Cada palabra legible es {"text":"PALABRA","role":"palabra","x":0,"y":0,"w":0,"h":0,"missing":false}.
 - Si el título es un dibujo sin palabras, no inventes palabras. Una parte {"text":"logo","role":"imagen","x":0,"y":0,"w":0,"h":0,"missing":false} cubre el logo completo. Si el dibujo tiene piezas separadas, cada una lleva role imagen o adorno y su propia caja.
-- x, y, w y h de cada parte son píxeles de la imagen original y cubren solo esa parte.
+- x, y, w y h de cada parte usan la misma medida en píxeles que el resto de las cajas y cubren solo esa parte.
 - Si una palabra se ve y no puedes fijar su caja, inclúyela con missing true. No la omitas y no inventes la caja.
 - Los campos x, y, w y h del componente se usan solo cuando el título es una imagen y no hay partes.'''
 

@@ -4,9 +4,19 @@ from PIL import Image
 import numpy as np
 
 from studio.desarmar.inspeccionar import listo_para_registrar
+from studio.desarmar.leer import _escala_del_boceto, _escalar_caja
 from studio.desarmar.recortar import _restore_title_letters
 from studio.desarmar.unir import apply_title_review, unir_titulo
 from studio.http import asset_path
+
+
+def _medir(comps, width, height):
+    import copy
+    comps = copy.deepcopy(comps)
+    sx, sy = _escala_del_boceto(comps, width, height)
+    for comp in comps:
+        _escalar_caja(comp, sx, sy)
+    return comps, sx, sy
 
 
 class TitleReviewTest(unittest.TestCase):
@@ -107,6 +117,92 @@ class TitleReviewTest(unittest.TestCase):
         manifest = asset_path('/assets/manifest.json')
         self.assertTrue(str(manifest).endswith('/assets/manifest.json'))
         self.assertIsNone(asset_path('/assets/../../server.py'))
+
+
+class EscalaDelBocetoTest(unittest.TestCase):
+    def test_las_milesimas_pasan_al_tamano_real(self):
+        comps = [
+            {'id': 'fondo', 'x': 0, 'y': 0, 'w': 1000, 'h': 1000},
+            {'id': 'minor', 'x': 100, 'y': 80, 'w': 220, 'h': 90},
+            {'id': 'grand', 'x': 400, 'y': 40, 'w': 280, 'h': 120},
+            {'id': 'charro', 'x': 300, 'y': 400, 'w': 80, 'h': 80, 'parts': [
+                {'text': 'A', 'role': 'adorno', 'x': 300, 'y': 400, 'w': 80, 'h': 80},
+            ]},
+            {'id': 'marco', 'x': 200, 'y': 200, 'w': 600, 'h': 500, 'hole': {'x': 240, 'y': 240, 'w': 520, 'h': 420}},
+        ]
+        salida, sx, sy = _medir(comps, 1920, 1080)
+        self.assertAlmostEqual(sx, 1.92)
+        self.assertAlmostEqual(sy, 1.08)
+        minor = next(comp for comp in salida if comp['id'] == 'minor')
+        grand = next(comp for comp in salida if comp['id'] == 'grand')
+        fondo = next(comp for comp in salida if comp['id'] == 'fondo')
+        marco = next(comp for comp in salida if comp['id'] == 'marco')
+        charro = next(comp for comp in salida if comp['id'] == 'charro')
+        self.assertEqual(minor['x'], round(100 * 1.92))
+        self.assertEqual(minor['w'], round(220 * 1.92))
+        self.assertEqual(minor['h'], round(90 * 1.08))
+        self.assertEqual(grand['w'], round(280 * 1.92))
+        self.assertEqual(fondo['w'], 1920)
+        self.assertEqual(fondo['h'], 1080)
+        self.assertEqual(marco['hole']['w'], round(520 * 1.92))
+        self.assertEqual(charro['parts'][0]['x'], round(300 * 1.92))
+
+    def test_los_pixeles_correctos_no_se_mueven(self):
+        comps = [
+            {'x': 0, 'y': 0, 'w': 1920, 'h': 1080},
+            {'x': 1400, 'y': 80, 'w': 400, 'h': 160},
+        ]
+        salida, sx, sy = _medir(comps, 1920, 1080)
+        self.assertEqual(sx, 1)
+        self.assertEqual(sy, 1)
+        self.assertEqual(salida[1]['x'], 1400)
+        self.assertEqual(salida[1]['w'], 400)
+
+    def test_un_boceto_chico_en_pixeles_no_se_encoge(self):
+        comps = [
+            {'x': 0, 'y': 0, 'w': 800, 'h': 600},
+            {'x': 40, 'y': 20, 'w': 180, 'h': 70},
+        ]
+        salida, sx, sy = _medir(comps, 800, 600)
+        self.assertEqual(sx, 1)
+        self.assertEqual(sy, 1)
+        self.assertEqual(salida[1]['w'], 180)
+
+    def test_las_milesimas_tambien_entran_en_un_boceto_chico(self):
+        comps = [
+            {'x': 0, 'y': 0, 'w': 1000, 'h': 1000},
+            {'x': 100, 'y': 50, 'w': 200, 'h': 80},
+        ]
+        salida, sx, sy = _medir(comps, 800, 600)
+        self.assertAlmostEqual(sx, 0.8)
+        self.assertAlmostEqual(sy, 0.6)
+        self.assertEqual(salida[1]['x'], 80)
+        self.assertEqual(salida[1]['h'], 48)
+
+    def test_una_foto_mas_chica_se_estira_en_todas_las_piezas(self):
+        comps = [
+            {'x': 0, 'y': 0, 'w': 1366, 'h': 768},
+            {'x': 80, 'y': 40, 'w': 200, 'h': 70},
+            {'x': 400, 'y': 500, 'w': 90, 'h': 90},
+        ]
+        salida, sx, sy = _medir(comps, 1920, 1080)
+        self.assertAlmostEqual(sx, 1920 / 1366)
+        self.assertAlmostEqual(sy, 1080 / 768)
+        self.assertEqual(salida[1]['w'], round(200 * sx))
+        self.assertEqual(salida[2]['x'], round(400 * sx))
+        self.assertEqual(salida[0]['w'], 1920)
+        self.assertEqual(salida[0]['h'], 1080)
+
+    def test_de_cero_a_uno_cubre_el_archivo_entero(self):
+        comps = [
+            {'x': 0, 'y': 0, 'w': 1, 'h': 1},
+            {'x': 0.25, 'y': 0.1, 'w': 0.2, 'h': 0.15},
+        ]
+        salida, _sx, _sy = _medir(comps, 1600, 900)
+        self.assertEqual(salida[1]['x'], 400)
+        self.assertEqual(salida[1]['y'], 90)
+        self.assertEqual(salida[1]['w'], 320)
+        self.assertEqual(salida[1]['h'], 135)
 
 
 if __name__ == '__main__':

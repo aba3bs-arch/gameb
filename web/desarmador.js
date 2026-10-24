@@ -184,9 +184,10 @@ $('analyzeAI').onclick=async()=>{
    const isTitle=/t[ií]tulo|logo|letrero/i.test(label);
    const isJackpot=/jackpot|grand|major|minor|mini/i.test(label);
    const isSymbol=/s[ií]mbolo/i.test(label);
-   const fx=isTitle?0.32:(isJackpot?0.045:(isSymbol?0.12:0.025));
-   const fy=isTitle?0.40:(isJackpot?0.06:(isSymbol?0.14:0.025));
-   const padX=Math.max(3,Math.round(p.w*fx)),padY=Math.max(3,Math.round(p.h*fy));
+   const isFrame=/marco/i.test(label);
+   const fx=isBackgroundPiece(p)?0:(isTitle?0.32:(isJackpot?0.18:(isSymbol?0.16:(isFrame?0.12:0.12))));
+   const fy=isBackgroundPiece(p)?0:(isTitle?0.40:(isJackpot?0.22:(isSymbol?0.18:(isFrame?0.12:0.14))));
+   const padX=isBackgroundPiece(p)?0:Math.max(8,Math.round(p.w*fx)),padY=isBackgroundPiece(p)?0:Math.max(8,Math.round(p.h*fy));
    const x=Math.max(0,Math.floor(p.x-padX)),y=Math.max(0,Math.floor(p.y-padY));
    const right=Math.min(W,Math.ceil(p.x+p.w+padX)),bottom=Math.min(H,Math.ceil(p.y+p.h+padY));
    return {...p,x,y,w:Math.max(1,right-x),h:Math.max(1,bottom-y),initialBox:{x:p.x,y:p.y,w:p.w,h:p.h},expandedForValidation:true};

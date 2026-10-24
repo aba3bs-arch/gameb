@@ -226,6 +226,28 @@ class RecortePorTipoTest(unittest.TestCase):
         self.assertLess(int(vacio[34, 86, 1]), 80)
         self.assertGreater(int(vacio[34, 24, 1]), 160)
 
+    def test_la_placa_llega_al_adorno_y_no_se_trae_la_vecina(self):
+        imagen = Image.new('RGBA', (260, 130), (30, 90, 200, 255))
+        pixel = imagen.load()
+        for y in range(48, 88):
+            for x in range(12, 28):
+                pixel[x, y] = (245, 200, 40, 255)
+        for y in range(12, 118):
+            for x in range(28, 200):
+                pixel[x, y] = (150, 24, 32, 255)
+        for y in range(40, 90):
+            for x in range(210, 248):
+                pixel[x, y] = (20, 140, 40, 255)
+        recorte, info = _recortar_desde_el_borde(imagen, 'placa', {'x': 36, 'y': 20, 'w': 150, 'h': 90})
+        self.assertEqual(info['engine'], 'borde-placa')
+        arr = np.array(recorte)
+        oro = (arr[:, :, 0] > 200) & (arr[:, :, 1] > 160) & (arr[:, :, 3] > 200)
+        verde = (arr[:, :, 1] > 100) & (arr[:, :, 0] < 80) & (arr[:, :, 3] > 200)
+        rojo = (arr[:, :, 0] > 120) & (arr[:, :, 1] < 60) & (arr[:, :, 3] > 200)
+        self.assertGreater(int(oro.sum()), 200)
+        self.assertEqual(int(verde.sum()), 0)
+        self.assertGreater(int(rojo.sum()), 2000)
+
     def test_la_placa_no_se_queda_con_chispas_sueltas(self):
         imagen = _placa_con_margen()
         pixel = imagen.load()

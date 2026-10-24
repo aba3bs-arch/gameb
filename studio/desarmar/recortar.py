@@ -390,7 +390,32 @@ def _aplicar_mascara(source, mask):
     return arr
 
 
-def _recortar_desde_el_borde(source, clase):
+def _pieza_de_la_caja(pieza, inner):
+    """La pieza es la que cae en su caja. Un vecino que entró por el margen no se queda."""
+    np = _need_numpy()
+    if not isinstance(inner, dict) or pieza.size == 0:
+        return pieza
+    h, w = pieza.shape
+    ix, iy, iw, ih = _parse_inner(inner, w, h)
+    if iw * ih >= int(w * h * 0.92):
+        return pieza
+    dentro = np.zeros((h, w), dtype=bool)
+    dentro[iy:iy + ih, ix:ix + iw] = True
+    labels, count = _label_components(pieza)
+    if count == 0:
+        return pieza
+    overlap = np.bincount(labels[dentro & pieza].ravel(), minlength=count + 1)
+    keep = overlap > 0
+    keep[0] = False
+    elegida = keep[labels]
+    if not np.any(elegida):
+        return pieza
+    if int((elegida & pieza & dentro).sum()) < int((pieza & dentro).sum()) * 0.5:
+        return pieza
+    return elegida
+
+
+def _recortar_desde_el_borde(source, clase, inner=None):
     """Placa y marco: suelta el paisaje del borde y tira las chispas que no son la pieza."""
     np = _need_numpy()
     rgb = np.array(source.convert('RGB'))
@@ -400,6 +425,8 @@ def _recortar_desde_el_borde(source, clase):
     arr = np.array(source.convert('RGBA'))
     if 0.015 <= ratio <= limite:
         pieza = _cerrar_bool(~fondo, 1)
+        if clase == 'placa':
+            pieza = _pieza_de_la_caja(pieza, inner)
         pieza = _quitar_islas(np.where(pieza, 255, 0).astype(np.uint8), 0.03, 48) >= 16
         arr = _aplicar_mascara(source, pieza)
     refined, info = refine_cutout(source, Image.fromarray(arr, 'RGBA'), None)
@@ -616,7 +643,7 @@ def quitar_fondo(data):
         if clase == 'fondo':
             result, info = source, {'trimX': 0, 'trimY': 0, 'engine': 'fondo', 'removedFragments': 0}
         elif clase in ('placa', 'marco'):
-            result, info = _recortar_desde_el_borde(source, clase)
+            result, info = _recortar_desde_el_borde(source, clase, data.get('inner'))
         else:
             result, info = _recortar_silueta(source, data.get('inner'))
             if not info.get('usable'):
