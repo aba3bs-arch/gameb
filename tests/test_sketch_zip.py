@@ -54,6 +54,14 @@ class SketchZipTest(unittest.TestCase):
         self.assertIn('&lt;script&gt;', page)
         self.assertNotIn('<script>alert', page)
 
+    def test_las_tres_variaciones_locales_son_distintas(self):
+        sketches = [server.local_sketch_svg('Tierra', 'Mexicano', 'Moderno', 'calaveras y neón', 5, 3, variation) for variation in (1, 2, 3)]
+        self.assertEqual(len(set(sketches)), 3)
+        for number, svg in enumerate(sketches, 1):
+            self.assertIn(f'Variación {number}', svg)
+            self.assertNotIn('<script', svg.lower())
+            self.assertTrue(svg.startswith('<svg'))
+
     def test_rechaza_un_svg_con_script(self):
         with self.assertRaises(ValueError):
             server.build_sketches_zip('Juego', [{'svg': '<svg><script>alert(1)</script></svg>'}])

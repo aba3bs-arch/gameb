@@ -596,6 +596,37 @@ def _sketches_index_html(project_name, sketches):
  title=html.escape(str(project_name or 'Bocetos'))
  return f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} · Inspección de bocetos</title><style>body{{margin:0;background:#08111f;color:#f3f6ff;font:16px/1.45 system-ui,sans-serif}}main{{max-width:1100px;margin:auto;padding:24px}}article{{margin:0 0 28px;padding:16px;border:1px solid #2b4263;border-radius:16px;background:#101d30}}h1,h2{{margin:0 0 8px}}p{{color:#aab9d1}}.frame{{overflow:auto;border-radius:10px;background:#07101c}}.frame svg{{display:block;width:100%;height:auto}}</style></head><body><main><h1>{title}</h1><p>{len(sketches)} bocetos conservados para inspección.</p>{''.join(articles)}</main></body></html>'''
 
+_VARIATION_NOTES={
+ 1:'Variación 1 de 3: composición principal, centrada y equilibrada.',
+ 2:'Variación 2 de 3: reorganiza los mismos elementos con paneles laterales y otra jerarquía. No repitas la composición de la variación 1.',
+ 3:'Variación 3 de 3: alternativa más contrastada, con el título y los controles en posiciones distintas, manteniendo el mismo tema.',
+}
+
+def local_sketch_svg(name, theme, style, concept, cols, rows, variation=1):
+ cols=max(3,min(6,int(cols or 5)));rows=max(3,min(5,int(rows or 3)));variation=variation if variation in (1,2,3) else 1
+ palettes={1:('#07111f','#f4ce76','#16345a','#e8f0ff','#c9862a'),2:('#12081f','#7ee0c6','#3a2168','#f4edff','#6d4de0'),3:('#1c0d09','#ffb085','#4a241c','#fff1e8','#e25b38')}
+ bg,accent,panel,ink,button=palettes[variation]
+ title=html.escape(str(name or 'Juego nuevo')[:42]);theme_label=html.escape(str(theme or 'Aventura')[:32]);idea=html.escape(str(concept or 'Boceto')[:72]);style_label=html.escape(str(style or 'Moderno')[:32])
+ symbols=('#f4ce76','#ff8b7b','#7ee0c6','#d8e6ff','#e25b38','#9b7bff')
+ def cell(x,y,w,h,index):
+  color=symbols[index%len(symbols)];cx=x+w/2;cy=y+h/2;r=min(w,h)*0.22
+  shape=(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{color}"/>',f'<rect x="{cx-r:.1f}" y="{cy-r:.1f}" width="{r*2:.1f}" height="{r*2:.1f}" rx="6" fill="{color}"/>',f'<polygon points="{cx:.1f},{cy-r:.1f} {cx+r:.1f},{cy+r*.7:.1f} {cx-r:.1f},{cy+r*.7:.1f}" fill="{color}"/>')[index%3]
+  return f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" rx="12" fill="#08111c" stroke="{accent}" stroke-width="3"/>{shape}'
+ def grid(x,y,w,h):
+  gap=10;cw=(w-gap*(cols-1))/cols;ch=(h-gap*(rows-1))/rows;parts=[]
+  for r in range(rows):
+   for c in range(cols): parts.append(cell(x+c*(cw+gap),y+r*(ch+gap),cw,ch,r*cols+c+variation))
+  return ''.join(parts)
+ jackpots=''.join(f'<rect x="{x}" y="{y}" width="150" height="48" rx="10" fill="{panel}" stroke="{accent}"/><text x="{x+75}" y="{y+30}" text-anchor="middle" fill="{accent}" font-size="18" font-family="sans-serif">{label}</text>' for x,y,label in ((40,78,'GRAND'),(210,78,'MAJOR'),(380,78,'MINI')))
+ if variation==1:
+  body=f'<text x="500" y="48" text-anchor="middle" fill="{accent}" font-size="34" font-family="sans-serif">{title}</text>{jackpots}<rect x="160" y="146" width="680" height="330" rx="18" fill="{panel}"/>{grid(176,162,648,298)}<rect x="390" y="500" width="220" height="62" rx="16" fill="{button}"/><text x="500" y="538" text-anchor="middle" fill="#1b1408" font-size="24" font-family="sans-serif">GIRAR</text>'
+ elif variation==2:
+  body=f'<text x="40" y="52" fill="{accent}" font-size="32" font-family="sans-serif">{title}</text><rect x="36" y="78" width="180" height="430" rx="16" fill="{panel}"/><text x="126" y="120" text-anchor="middle" fill="{accent}" font-size="18" font-family="sans-serif">GRAND</text><text x="126" y="230" text-anchor="middle" fill="{accent}" font-size="18" font-family="sans-serif">MAJOR</text><text x="126" y="340" text-anchor="middle" fill="{accent}" font-size="18" font-family="sans-serif">MINI</text><rect x="126" y="430" width="0" height="0"/><rect x="250" y="86" width="710" height="360" rx="18" fill="{panel}"/>{grid(266,102,678,328)}<rect x="760" y="470" width="200" height="64" rx="16" fill="{button}"/><text x="860" y="510" text-anchor="middle" fill="#1b1408" font-size="24" font-family="sans-serif">GIRAR</text>'
+ else:
+  body=f'<rect x="180" y="28" width="640" height="78" rx="18" fill="{panel}"/><text x="500" y="78" text-anchor="middle" fill="{accent}" font-size="34" font-family="sans-serif">{title}</text><rect x="70" y="132" width="860" height="300" rx="18" fill="{panel}"/>{grid(86,148,828,268)}<rect x="70" y="456" width="560" height="96" rx="16" fill="{panel}"/><text x="350" y="512" text-anchor="middle" fill="{ink}" font-size="20" font-family="sans-serif">CRÉDITOS · APUESTA</text><rect x="660" y="456" width="270" height="96" rx="16" fill="{button}"/><text x="795" y="512" text-anchor="middle" fill="#1b1408" font-size="24" font-family="sans-serif">GIRAR</text>'
+ svg=f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600"><rect width="1000" height="600" fill="{bg}"/>{body}<text x="40" y="584" fill="{ink}" font-size="14" font-family="sans-serif">Variación {variation} · {style_label} · {theme_label} · {idea}</text></svg>'
+ return sanitize_svg(svg)
+
 def generate_sketch_with_openai(name, theme, style, concept, cols, rows, notes):
  token=access_token()
  auth_mode='chatgpt'
@@ -702,9 +733,18 @@ class Handler(SimpleHTTPRequestHandler):
    if self.path=='/api/generate-image':
     return self.send_json(410,{'error':'La generación de imágenes no está disponible mediante la conexión compartida de ChatGPT. Diseña el boceto en ChatGPT y usa /api/assets/import para incorporarlo a la biblioteca local.'})
    if self.path=='/api/generate-sketch':
+    try: variation=max(1,min(3,int(data.get('variation') or 1)))
+    except (TypeError,ValueError): variation=1
+    name=str(data.get('name',''))[:120];theme=str(data.get('theme',''))[:120];style=str(data.get('style',''))[:120];concept=str(data.get('concept',''))[:2500]
+    cols=max(3,min(6,int(data.get('columns',5) or 5)));rows=max(3,min(5,int(data.get('rows',3) or 3)))
+    notes=(str(data.get('notes',''))[:1200]+' '+_VARIATION_NOTES[variation]).strip()
     try:
-     result=generate_sketch_with_openai(str(data.get('name',''))[:120],str(data.get('theme',''))[:120],str(data.get('style',''))[:120],str(data.get('concept',''))[:2500],max(3,min(6,int(data.get('columns',5)))),max(3,min(5,int(data.get('rows',3)))),str(data.get('notes',''))[:1500])
-    except Exception as e: return self.send_json(502,{'error':str(e)})
+     result=generate_sketch_with_openai(name,theme,style,concept,cols,rows,notes)
+     result.update({'variation':variation,'local':False})
+    except Exception as e:
+     message=str(e)
+     if 'No hay sesión de ChatGPT' not in message and 'No hay OPENAI_API_KEY' not in message: return self.send_json(502,{'error':message})
+     result={'ok':True,'svg':local_sketch_svg(name,theme,style,concept,cols,rows,variation),'authMode':'local','local':True,'variation':variation,'summary':'ChatGPT no está conectado. Este boceto vectorial se creó en el equipo para que puedas inspeccionarlo y descargarlo.'}
     return self.send_json(200,result)
    if self.path=='/api/sketches/zip':
     try: blob,filename=build_sketches_zip(str(data.get('name',''))[:120],data.get('sketches',[]))
