@@ -601,7 +601,7 @@ def generate_sketch_with_openai(name, theme, style, concept, cols, rows, notes):
  auth_mode='chatgpt'
  if not token:
   key=os.environ.get('OPENAI_API_KEY','').strip()
-  if not key: raise RuntimeError('No hay sesión de ChatGPT activa. Conecta tu cuenta en la etapa 4.')
+  if not key: raise RuntimeError('No hay sesión de ChatGPT activa. Pulsa Conectar con ChatGPT e inténtalo otra vez.')
   token=key;auth_mode='api'
  prompt=f"""Crea un boceto visual original de una tragamonedas en SVG autocontenido de 1000x600 píxeles. Es un concepto de interfaz ficticia, sin dinero real. Juego: {name or 'Juego nuevo'}. Tema: {theme or 'Aventura fantástica'}. Estilo visual: {style or 'Moderno premium'}. Idea del usuario: {concept or 'Diseño atractivo y legible'}. Rodillos: {cols} columnas x {rows} filas. Notas: {notes or 'Sin notas adicionales'}.
 Devuelve SOLO el SVG completo, sin markdown ni explicaciones. Usa viewBox="0 0 1000 600", fondo elaborado, título legible, un marco central con exactamente {cols} columnas y {rows} filas, símbolos vectoriales sencillos originales, paneles de jackpot arriba y controles abajo. Composición equilibrada, bordes limpios, sin elementos fuera del lienzo, textos cortos en español, contraste alto, estética pulida. Usa solo SVG y formas vectoriales (rect, path, circle, ellipse, polygon, text, defs/linearGradient). No uses scripts, enlaces, imágenes externas, foreignObject ni filtros costosos. Debe ser SVG válido y cerrar todos los tags."""
