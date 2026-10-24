@@ -438,6 +438,216 @@ def _recortar_desde_el_borde(source, clase, inner=None):
     return Image.fromarray(out, 'RGBA'), info
 
 
+def _es_simbolo(kind):
+    text = str(kind or '').lower().replace('í', 'i').replace('Í', 'i')
+    return 'simbolo' in text
+
+
+def _lado_recto(vals, fuerza, lado):
+    """Un lado de cuadrado cae casi en la misma fila o columna. Un círculo no."""
+    if len(vals) < 8:
+        return None
+    orden = sorted(range(len(vals)), key=lambda indice: vals[indice])
+    n = len(orden)
+    inicio = n // 5
+    centro = orden[inicio:max(inicio + 1, n - inicio)]
+    elegidos = [vals[indice] for indice in centro]
+    if max(elegidos) - min(elegidos) > max(3, int(lado * 0.06)):
+        return None
+    pos = int(round(sum(elegidos) / float(len(elegidos))))
+    media = sorted(fuerza)[len(fuerza) // 2]
+    return pos, media
+
+
+def _cuadrado_de_simbolo(rgb, inner):
+    """Si el símbolo es un cuadrado con marco, devuelve ese rectángulo. Una figura suelta no entra."""
+    np = _need_numpy()
+    if not isinstance(inner, dict) or rgb.ndim != 3:
+        return None
+    alto, ancho = rgb.shape[:2]
+    ix, iy, iw, ih = _parse_inner(inner, ancho, alto)
+    if iw < 32 or ih < 32:
+        return None
+    color = rgb.astype(np.int16)
+    x0, y0 = max(0, ix - 6), max(0, iy - 6)
+    x1, y1 = min(ancho, ix + iw + 6), min(alto, iy + ih + 6)
+    anillo = np.zeros((alto, ancho), dtype=bool)
+    anillo[y0:y1, x0:x1] = True
+    anillo[iy:iy + ih, ix:ix + iw] = False
+    if int(anillo.sum()) < 16:
+        return None
+    escena = np.median(color[anillo], axis=0)
+
+    def distinto(y, x):
+        return int(np.max(np.abs(color[y, x] - escena))) > 32
+
+    def barrer_vertical(hacia_derecha):
+        vals, fuerza = [], []
+        y_desde = iy + max(2, ih // 8)
+        y_hasta = iy + ih - max(2, ih // 8)
+        paso = max(1, (y_hasta - y_desde) // 24)
+        x_rango = range(ix, ix + iw // 2) if hacia_derecha else range(ix + iw - 1, ix + iw // 2, -1)
+        for y in range(y_desde, y_hasta, paso):
+            for x in x_rango:
+                if distinto(y, x):
+                    vals.append(x)
+                    fuerza.append(int(np.max(np.abs(color[y, x] - escena))))
+                    break
+        return vals, fuerza
+
+    def barrer_horizontal(hacia_abajo):
+        vals, fuerza = [], []
+        x_desde = ix + max(2, iw // 8)
+        x_hasta = ix + iw - max(2, iw // 8)
+        paso = max(1, (x_hasta - x_desde) // 24)
+        y_rango = range(iy, iy + ih // 2) if hacia_abajo else range(iy + ih - 1, iy + ih // 2, -1)
+        for x in range(x_desde, x_hasta, paso):
+            for y in y_rango:
+                if distinto(y, x):
+                    vals.append(y)
+                    fuerza.append(int(np.max(np.abs(color[y, x] - escena))))
+                    break
+        return vals, fuerza
+
+    lados = (
+        _lado_recto(*barrer_vertical(True), iw),
+        _lado_recto(*barrer_vertical(False), iw),
+        _lado_recto(*barrer_horizontal(True), ih),
+        _lado_recto(*barrer_horizontal(False), ih),
+    )
+    if any(lado is None for lado in lados):
+        return None
+    izquierda, derecha, arriba, abajo = lados
+    if min(izquierda[1], derecha[1], arriba[1], abajo[1]) < 34:
+        return None
+    bx, by = izquierda[0], arriba[0]
+    bw = derecha[0] - bx + 1
+    bh = abajo[0] - by + 1
+    if bw < 28 or bh < 28:
+        return None
+    proporcion = bw / float(bh)
+    if proporcion < 0.80 or proporcion > 1.25:
+        return None
+    return {'x': bx, 'y': by, 'w': bw, 'h': bh}
+
+
+def _borde_suave(src, out, x0, y0, x1, y1):
+    """El píxel mezclado del filo usa el color del cuadrado y una alfa real, no el color del fondo."""
+    np = _need_numpy()
+    alto, ancho = out.shape[:2]
+    dentro = np.zeros((alto, ancho), dtype=bool)
+    dentro[y0:y1, x0:x1] = True
+    afuera = ~dentro
+    if int(afuera.sum()) < 8:
+        return
+    escena = np.median(src[:, :, :3][afuera].astype(np.int16), axis=0)
+    y_a, y_b = max(0, y0 - 1), min(alto, y1 + 1)
+    x_a, x_b = max(0, x0 - 1), min(ancho, x1 + 1)
+    for y in range(y_a, y_b):
+        for x in range(x_a, x_b):
+            if dentro[y, x]:
+                continue
+            vecino = None
+            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if 0 <= ny < alto and 0 <= nx < ancho and dentro[ny, nx]:
+                    vecino = src[ny, nx, :3].astype(np.float32)
+                    break
+            if vecino is None:
+                continue
+            obs = src[y, x, :3].astype(np.float32)
+            diff = vecino - escena.astype(np.float32)
+            denom = float(np.dot(diff, diff))
+            if denom <= 64.0:
+                continue
+            cobertura = float(np.dot(obs - escena, diff) / denom)
+            if cobertura < 0.15 or cobertura > 0.92:
+                continue
+            out[y, x, :3] = np.clip(vecino, 0, 255).astype(np.uint8)
+            out[y, x, 3] = int(round(cobertura * 255))
+
+
+def _recortar_cuadrado(source, rect):
+    """El símbolo cuadrado se queda entero: marco, fondo de la ficha y dibujo, con el filo limpio."""
+    np = _need_numpy()
+    src = np.array(source.convert('RGBA'))
+    alto, ancho = src.shape[:2]
+    x0 = max(0, min(ancho - 1, int(rect['x'])))
+    y0 = max(0, min(alto - 1, int(rect['y'])))
+    x1 = max(x0 + 1, min(ancho, x0 + int(rect['w'])))
+    y1 = max(y0 + 1, min(alto, y0 + int(rect['h'])))
+    out = np.zeros_like(src)
+    out[y0:y1, x0:x1] = src[y0:y1, x0:x1]
+    out[y0:y1, x0:x1, 3] = 255
+    _borde_suave(src, out, x0, y0, x1, y1)
+    ys, xs = np.nonzero(out[:, :, 3] > 8)
+    pad = 1
+    recorte_x = max(0, int(xs.min()) - pad)
+    recorte_y = max(0, int(ys.min()) - pad)
+    recorte_x1 = min(ancho, int(xs.max()) + 1 + pad)
+    recorte_y1 = min(alto, int(ys.max()) + 1 + pad)
+    imagen = Image.fromarray(out, 'RGBA').crop((recorte_x, recorte_y, recorte_x1, recorte_y1))
+    return imagen, {
+        'removedFragments': 0,
+        'trimX': recorte_x,
+        'trimY': recorte_y,
+        'width': imagen.width,
+        'height': imagen.height,
+        'engine': 'cuadrado',
+        'usable': True,
+    }
+
+
+def _paisaje_del_borde(rgb, salto=26):
+    """Color del borde. No sigue un degradado hasta comerse la figura."""
+    np = _need_numpy()
+    from collections import deque
+    alto, ancho = rgb.shape[:2]
+    color = rgb.astype(np.int16)
+    fondo = np.zeros((alto, ancho), dtype=bool)
+    if alto < 3 or ancho < 3:
+        return fondo
+    borde = np.zeros((alto, ancho), dtype=bool)
+    borde[0, :] = borde[-1, :] = True
+    borde[:, 0] = borde[:, -1] = True
+    ref = np.median(color[borde], axis=0)
+    ys, xs = np.nonzero(borde)
+    queue = deque()
+    for y, x in zip(ys.tolist(), xs.tolist()):
+        if int(np.max(np.abs(color[y, x] - ref))) <= salto:
+            fondo[y, x] = True
+            queue.append((y, x))
+    while queue:
+        y, x = queue.popleft()
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if ny < 0 or nx < 0 or ny >= alto or nx >= ancho or fondo[ny, nx]:
+                continue
+            if int(np.max(np.abs(color[ny, nx] - ref))) > salto:
+                continue
+            fondo[ny, nx] = True
+            queue.append((ny, nx))
+    return fondo
+
+
+def _completar_contorno(rgb, mask):
+    """Suma el filo real de la figura. No rellena un hueco con el color del fondo."""
+    np = _need_numpy()
+    if mask is None or not np.any(mask):
+        return mask
+    alto, ancho = mask.shape
+    color = rgb.astype(np.int16) if rgb.dtype != np.int16 else rgb
+    if color.ndim != 3:
+        return mask
+    borde = np.zeros((alto, ancho), dtype=bool)
+    borde[0, :] = borde[-1, :] = True
+    borde[:, 0] = borde[:, -1] = True
+    if int(borde.sum()) < 4:
+        return mask
+    escena = np.median(color[borde], axis=0)
+    difiere = np.max(np.abs(color - escena), axis=2) > 26
+    cerca = _dilate_bool(mask, 1) & ~mask
+    return mask | (cerca & difiere)
+
+
 def _silueta_por_contraste(rgb, inner):
     """El dibujo dentro de su caja. El paisaje que rodea las letras o el símbolo sale."""
     np = _need_numpy()
@@ -452,7 +662,7 @@ def _silueta_por_contraste(rgb, inner):
         Image.fromarray(rgb.astype(np.uint8), 'RGB').resize((small_w, small_h), resample).resize((w, h), resample),
         np.int16,
     )
-    tinta = np.max(np.abs(rgb.astype(np.int16) - blur), axis=2) > 38
+    tinta = np.max(np.abs(rgb.astype(np.int16) - blur), axis=2) > 26
     dentro = np.zeros((h, w), dtype=bool)
     dentro[iy:iy + ih, ix:ix + iw] = True
     semillas = np.zeros((h, w), dtype=bool)
@@ -474,26 +684,26 @@ def _silueta_por_contraste(rgb, inner):
         for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
             if ny < iy or nx < ix or ny >= y1 or nx >= x1 or fondo[ny, nx] or tinta[ny, nx]:
                 continue
-            if int(np.max(np.abs(color[ny, nx] - base))) > 28:
+            if int(np.max(np.abs(color[ny, nx] - base))) > 22:
                 continue
             fondo[ny, nx] = True
             queue.append((ny, nx))
     sujeto = (dentro & ~fondo) | (tinta & dentro)
     cubierto = float(sujeto.sum()) / float(iw * ih)
-    if cubierto < 0.12 or cubierto > 0.90:
+    if cubierto < 0.12 or cubierto > 0.97:
         return None
     # El sombrero y el adorno que se salen de la caja siguen, si están pegados al dibujo.
-    paisaje = _fondo_conectado_al_borde(rgb if rgb.dtype == np.uint8 else rgb.astype(np.uint8))
+    paisaje = _paisaje_del_borde(rgb if rgb.dtype == np.uint8 else rgb.astype(np.uint8))
     labels, count = _label_components(~paisaje)
     if count == 0:
-        return sujeto
+        return _completar_contorno(rgb, sujeto)
     overlap = np.bincount(labels[sujeto].ravel(), minlength=count + 1)
     keep = overlap > 0
     keep[0] = False
     crecido = keep[labels]
     if int((crecido & sujeto).sum()) < int(sujeto.sum()) * 0.5:
-        return sujeto
-    return crecido
+        return _completar_contorno(rgb, sujeto)
+    return _completar_contorno(rgb, crecido)
 
 
 def _recortar_silueta(source, inner):
@@ -645,9 +855,14 @@ def quitar_fondo(data):
         elif clase in ('placa', 'marco'):
             result, info = _recortar_desde_el_borde(source, clase, data.get('inner'))
         else:
-            result, info = _recortar_silueta(source, data.get('inner'))
-            if not info.get('usable'):
-                result, info = _segment_cutout(source, data.get('inner'), kind)
+            np = _need_numpy()
+            rect = _cuadrado_de_simbolo(np.array(source.convert('RGB')), data.get('inner')) if _es_simbolo(kind) else None
+            if rect is not None:
+                result, info = _recortar_cuadrado(source, rect)
+            else:
+                result, info = _recortar_silueta(source, data.get('inner'))
+                if not info.get('usable'):
+                    result, info = _segment_cutout(source, data.get('inner'), kind)
         from studio.desarmar.catalogo import aplicar_lamina
         result = aplicar_lamina(
             result,

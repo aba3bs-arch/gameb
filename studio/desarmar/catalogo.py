@@ -9,7 +9,7 @@ Devuelve SOLO estas piezas. Cada una es un PNG. No devuelvas nada más.
 - Fondo: un solo componente, id fondo_principal, tipo Fondo. Es la escena completa y opaca, sin título, placas, símbolos, marco ni botones. No la partas en cielo, luna, edificios, nubes, flores ni personajes.
 - Título: el logo completo. Puede ser letras, un dibujo o las dos cosas. id titulo_ y el nombre visible. Si no hay palabras, una parte role imagen cubre el logo.
 - Marco de rodillos, solo si el boceto tiene rodillos: id marco_rodillos. hole es la ventana interior. El centro del PNG queda transparente.
-- Cada icono dentro de los rodillos es un Símbolo, id simbolo_ y el nombre del dibujo. Un bonus que está en una celda es un Símbolo. Lo que está pintado en el paisaje no es un símbolo.
+- Cada icono dentro de los rodillos es un Símbolo, id simbolo_ y el nombre del dibujo. Si el icono es un cuadrado con marco, la caja cubre ese cuadrado entero, marco incluido. Si es una figura suelta, la caja cubre la figura entera. Un bonus que está en una celda es un Símbolo. Lo que está pintado en el paisaje no es un símbolo.
 - Cada placa de premio es un Jackpot, id jackpot_ y su nombre. grand, major, minor y mini son ejemplos, no una lista cerrada. El monto va en parts con role cifra y el programa lo borra.
 - Cada botón lleva id boton_ y su nombre.
 - Cada panel lleva id panel_ y su nombre. La cifra también va en parts con role cifra.

@@ -9,6 +9,7 @@ from studio.desarmar.catalogo import aplicar_lamina
 from studio.desarmar.fondo import clean_background
 from studio.desarmar.recortar import (
     _clase_de_pieza,
+    _cuadrado_de_simbolo,
     _drawing_disappeared,
     _label_components,
     _recortar_desde_el_borde,
@@ -299,6 +300,75 @@ class RecortePorTipoTest(unittest.TestCase):
         verde = (arr[:, :, 1] > 120) & (arr[:, :, 0] < 80) & (arr[:, :, 3] > 200)
         self.assertGreater(int(verde.sum()), 200)
         self.assertGreater(int(((arr[:, :, 0] > 200) & (arr[:, :, 1] > 150) & (arr[:, :, 3] > 200)).sum()), 800)
+
+    def _png(self, image):
+        buf = io.BytesIO()
+        image.save(buf, format='PNG')
+        return 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode('ascii')
+
+    def test_un_simbolo_cuadrado_conserva_el_marco_y_el_dibujo(self):
+        imagen = Image.new('RGBA', (160, 160), (20, 60, 140, 255))
+        pixel = imagen.load()
+        for y in range(30, 130):
+            for x in range(30, 130):
+                pixel[x, y] = (180, 90, 30, 255)
+        for y in range(30, 130):
+            for x in range(30, 130):
+                if x < 38 or x >= 122 or y < 38 or y >= 122:
+                    pixel[x, y] = (230, 180, 40, 255)
+        for y in range(70, 90):
+            for x in range(70, 90):
+                pixel[x, y] = (220, 30, 40, 255)
+        for y in range(4, 16):
+            for x in range(4, 16):
+                pixel[x, y] = (20, 160, 40, 255)
+        caja = {'x': 18, 'y': 18, 'w': 124, 'h': 124}
+        self.assertIsNotNone(_cuadrado_de_simbolo(np.array(imagen.convert('RGB')), caja))
+        status, body = quitar_fondo({'image': self._png(imagen), 'kind': 'Símbolo simbolo_charro', 'inner': caja})
+        self.assertEqual(status, 200)
+        self.assertEqual(body['engine'], 'cuadrado')
+        arr = np.array(Image.open(io.BytesIO(base64.b64decode(body['image'].split(',', 1)[1]))).convert('RGBA'))
+        self.assertGreater(int(arr[arr.shape[0] // 2, arr.shape[1] // 2, 0]), 180)
+        self.assertEqual(int(arr[arr.shape[0] // 2, arr.shape[1] // 2, 3]), 255)
+        oro = (arr[:, :, 0] > 200) & (arr[:, :, 1] > 150) & (arr[:, :, 2] < 80) & (arr[:, :, 3] > 200)
+        self.assertGreater(int(oro.sum()), 400)
+        verde = (arr[:, :, 1] > 120) & (arr[:, :, 0] < 80) & (arr[:, :, 3] > 16)
+        self.assertEqual(int(verde.sum()), 0)
+        self.assertLess(abs(arr.shape[0] - arr.shape[1]), 8)
+
+    def test_una_figura_redonda_no_se_trata_como_cuadrado(self):
+        imagen = Image.new('RGBA', (140, 140), (20, 60, 140, 255))
+        pixel = imagen.load()
+        for y in range(140):
+            for x in range(140):
+                if (x - 70) ** 2 + (y - 70) ** 2 <= 40 ** 2:
+                    pixel[x, y] = (210, 40, 40, 255)
+        caja = {'x': 16, 'y': 16, 'w': 108, 'h': 108}
+        self.assertIsNone(_cuadrado_de_simbolo(np.array(imagen.convert('RGB')), caja))
+
+    def test_el_degradado_del_contorno_se_queda_con_su_color(self):
+        escena = np.array([20, 70, 160], np.float32)
+        rojo = np.array([210, 40, 40], np.float32)
+        lienzo = np.zeros((140, 140, 4), np.uint8)
+        lienzo[:, :] = (20, 70, 160, 255)
+        for y in range(140):
+            for x in range(140):
+                dist = ((x - 70) ** 2 + (y - 70) ** 2) ** 0.5
+                if dist <= 26:
+                    lienzo[y, x, :3] = (210, 40, 40)
+                elif dist < 40:
+                    t = (40 - dist) / 14.0
+                    lienzo[y, x, :3] = np.clip(escena + t * (rojo - escena), 0, 255).astype(np.uint8)
+        recorte, info = _recortar_silueta(Image.fromarray(lienzo, 'RGBA'), {'x': 20, 'y': 20, 'w': 100, 'h': 100})
+        self.assertTrue(info.get('usable'))
+        arr = np.array(recorte)
+        self.assertGreater(int(arr[arr.shape[0] // 2, arr.shape[1] // 2, 0]), 180)
+        self.assertEqual(int(arr[arr.shape[0] // 2, arr.shape[1] // 2, 3]), 255)
+        # A mitad del degradado el rojo sigue presente y no queda el azul del fondo.
+        mezcla = (arr[:, :, 0] > 90) & (arr[:, :, 0] < 180) & (arr[:, :, 3] > 200)
+        self.assertGreater(int(mezcla.sum()), 40)
+        azul = (arr[:, :, 2] > 140) & (arr[:, :, 0] < 50) & (arr[:, :, 3] > 16)
+        self.assertEqual(int(azul.sum()), 0)
 
     def test_el_simbolo_queda_solo_dentro_de_su_caja(self):
         imagen = Image.new('RGBA', (120, 100), (12, 40, 30, 255))
