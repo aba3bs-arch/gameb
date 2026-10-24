@@ -33,19 +33,21 @@ if errorlevel 1 (
   echo Ejecuta INSTALAR_DEPENDENCIAS.bat y verifica que termine correctamente.
   echo.
 )
-echo Cerrando el programa que quedo abierto en el puerto 8766...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8766" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>nul
+echo Cerrando el programa viejo...
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8766" ^| findstr /I "LISTENING ESCUCHANDO"') do taskkill /F /PID %%a >nul 2>nul
 timeout /t 1 /nobreak >nul
 echo Abriendo el servidor nuevo. Deja abierta la otra ventana negra.
 start "GAMEB Studio - version nueva" /D "%~dp0" %PYEXE% server.py
-powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 40; $i++){ try { $r=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8766/health' -TimeoutSec 2; if($r.StatusCode -eq 200){ $ok=$true; break } } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ exit 1 }"
+powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 40; $i++){ try { $r=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8766/health' -TimeoutSec 2; if($r.Content -match 'nueva'){ $ok=$true; break } } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ exit 1 }"
 if errorlevel 1 (
   echo.
-  echo El programa nuevo no pudo arrancar. Mira la otra ventana negra.
+  echo Sigue abierto el programa viejo. Cierra la ventana negra que dice Nucleo IA V2.
+  echo Despues vuelve a hacer doble clic en este archivo.
   pause
   exit /b 1
 )
-start "" "http://127.0.0.1:8766/desarmador.html"
+start "" "http://127.0.0.1:8766/desarmador.html?nueva=1"
 echo.
 echo Listo. En la pagina, debajo del titulo, debe decir: Version nueva. Cinco pasos.
 echo Si no lo dice, cierra Edge por completo y vuelve a hacer doble clic en este archivo.

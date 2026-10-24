@@ -154,6 +154,7 @@ class Handler(SimpleHTTPRequestHandler):
         if path == '/health':
             return self.send_json(200, {
                 'ok': True,
+                'edition': 'nueva',
                 'chatgptConnected': bool(read_credentials().get('access_token')),
                 'apiKeyConfigured': bool(os.environ.get('OPENAI_API_KEY')),
                 'pillowAvailable': bool(Image),
