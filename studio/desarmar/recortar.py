@@ -357,8 +357,41 @@ def _fondo_conectado_al_borde(rgb, salto=24):
     return fondo
 
 
+def _erode_bool(mask, radius):
+    return ~_dilate_bool(~mask, radius)
+
+
+def _cerrar_bool(mask, radius=1):
+    """Cierra mordidas de un píxel en el filo, sin alcanzar una chispa separada."""
+    return _erode_bool(_dilate_bool(mask, radius), radius)
+
+
+def _quitar_islas(alpha, fraccion=0.03, minimo=40):
+    """Quita chispas sueltas. Una letra o la placa, que son grandes, se quedan."""
+    np = _need_numpy()
+    labels, count = _label_components(alpha >= 16)
+    if count <= 1:
+        return alpha
+    areas = np.bincount(labels.ravel(), minlength=count + 1)
+    mayor = int(areas[1:].max())
+    if mayor < minimo:
+        return alpha
+    corte = max(minimo, int(mayor * fraccion))
+    keep = areas >= corte
+    keep[0] = False
+    return np.where(keep[labels], alpha, 0).astype(np.uint8)
+
+
+def _aplicar_mascara(source, mask):
+    np = _need_numpy()
+    arr = np.array(source.convert('RGBA'))
+    arr[~mask, 3] = 0
+    arr[~mask, :3] = 0
+    return arr
+
+
 def _recortar_desde_el_borde(source, clase):
-    """Placa y marco: suelta el fondo pegado al borde y conserva el dibujo plano."""
+    """Placa y marco: suelta el paisaje del borde y tira las chispas que no son la pieza."""
     np = _need_numpy()
     rgb = np.array(source.convert('RGB'))
     fondo = _fondo_conectado_al_borde(rgb)
@@ -366,11 +399,86 @@ def _recortar_desde_el_borde(source, clase):
     limite = 0.40 if clase == 'placa' else 0.55
     arr = np.array(source.convert('RGBA'))
     if 0.015 <= ratio <= limite:
-        arr[fondo, 3] = 0
-        arr[fondo, :3] = 0
+        pieza = _cerrar_bool(~fondo, 1)
+        pieza = _quitar_islas(np.where(pieza, 255, 0).astype(np.uint8), 0.03, 48) >= 16
+        arr = _aplicar_mascara(source, pieza)
     refined, info = refine_cutout(source, Image.fromarray(arr, 'RGBA'), None)
+    out = np.array(refined)
+    limpio = _quitar_islas(out[:, :, 3], 0.03, 48)
+    out[:, :, 3] = limpio
+    out[limpio < 16, :3] = 0
     info['engine'] = 'borde-' + clase
-    return refined, info
+    return Image.fromarray(out, 'RGBA'), info
+
+
+def _silueta_por_contraste(rgb, inner):
+    """El dibujo dentro de su caja. El paisaje que rodea las letras o el símbolo sale."""
+    np = _need_numpy()
+    from collections import deque
+    h, w = rgb.shape[:2]
+    ix, iy, iw, ih = _parse_inner(inner, w, h)
+    if iw < 8 or ih < 8:
+        return None
+    small_w, small_h = max(8, w // 12), max(8, h // 12)
+    resample = Image.Resampling.BILINEAR if hasattr(Image, 'Resampling') else Image.BILINEAR
+    blur = np.asarray(
+        Image.fromarray(rgb.astype(np.uint8), 'RGB').resize((small_w, small_h), resample).resize((w, h), resample),
+        np.int16,
+    )
+    tinta = np.max(np.abs(rgb.astype(np.int16) - blur), axis=2) > 38
+    dentro = np.zeros((h, w), dtype=bool)
+    dentro[iy:iy + ih, ix:ix + iw] = True
+    semillas = np.zeros((h, w), dtype=bool)
+    semillas[iy, ix:ix + iw] = True
+    semillas[min(h - 1, iy + ih - 1), ix:ix + iw] = True
+    semillas[iy:iy + ih, ix] = True
+    semillas[iy:iy + ih, min(w - 1, ix + iw - 1)] = True
+    semillas &= dentro & ~tinta
+    if int(semillas.sum()) < 8:
+        return None
+    color = rgb.astype(np.int16)
+    fondo = semillas.copy()
+    ys, xs = np.nonzero(semillas)
+    queue = deque(zip(ys.tolist(), xs.tolist()))
+    y1, x1 = iy + ih, ix + iw
+    while queue:
+        y, x = queue.popleft()
+        base = color[y, x]
+        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if ny < iy or nx < ix or ny >= y1 or nx >= x1 or fondo[ny, nx] or tinta[ny, nx]:
+                continue
+            if int(np.max(np.abs(color[ny, nx] - base))) > 28:
+                continue
+            fondo[ny, nx] = True
+            queue.append((ny, nx))
+    sujeto = (dentro & ~fondo) | (tinta & dentro)
+    cubierto = float(sujeto.sum()) / float(iw * ih)
+    if cubierto < 0.12 or cubierto > 0.90:
+        return None
+    return sujeto
+
+
+def _recortar_silueta(source, inner):
+    """Título, símbolo y botón: recorta el dibujo de su caja, sin el paisaje de alrededor."""
+    np = _need_numpy()
+    rgb = np.array(source.convert('RGB'))
+    sujeto = _silueta_por_contraste(rgb, inner)
+    if sujeto is None:
+        return None, {'usable': False}
+    arr = _aplicar_mascara(source, sujeto)
+    arr[:, :, 3] = _quitar_islas(arr[:, :, 3], 0.008, 18)
+    arr[arr[:, :, 3] < 16, :3] = 0
+    try:
+        refined, info = refine_cutout(source, Image.fromarray(arr, 'RGBA'), inner)
+    except RuntimeError:
+        return None, {'usable': False}
+    out = np.array(refined)
+    limpio = _quitar_islas(out[:, :, 3], 0.008, 18)
+    out[:, :, 3] = limpio
+    out[limpio < 16, :3] = 0
+    info['engine'] = 'contraste'
+    info['usable'] = True
+    return Image.fromarray(out, 'RGBA'), info
 
 
 def _segment_cutout(source, inner, kind=''):
@@ -499,7 +607,9 @@ def quitar_fondo(data):
         elif clase in ('placa', 'marco'):
             result, info = _recortar_desde_el_borde(source, clase)
         else:
-            result, info = _segment_cutout(source, data.get('inner'), kind)
+            result, info = _recortar_silueta(source, data.get('inner'))
+            if not info.get('usable'):
+                result, info = _segment_cutout(source, data.get('inner'), kind)
         from studio.desarmar.catalogo import aplicar_lamina
         result = aplicar_lamina(
             result,

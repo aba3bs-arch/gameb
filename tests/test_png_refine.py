@@ -10,7 +10,9 @@ from studio.desarmar.fondo import clean_background
 from studio.desarmar.recortar import (
     _clase_de_pieza,
     _drawing_disappeared,
+    _label_components,
     _recortar_desde_el_borde,
+    _recortar_silueta,
     _restore_title_letters,
     _should_restore,
     quitar_fondo,
@@ -223,6 +225,56 @@ class RecortePorTipoTest(unittest.TestCase):
         vacio = np.array(aplicar_lamina(imagen, erase=[{'x': 78, 'y': 22, 'w': 16, 'h': 26}], kind='Panel panel_apuesta'))
         self.assertLess(int(vacio[34, 86, 1]), 80)
         self.assertGreater(int(vacio[34, 24, 1]), 160)
+
+    def test_la_placa_no_se_queda_con_chispas_sueltas(self):
+        imagen = _placa_con_margen()
+        pixel = imagen.load()
+        for y in range(6, 16):
+            for x in range(6, 16):
+                pixel[x, y] = (245, 220, 80, 255)
+        recorte, info = _recortar_desde_el_borde(imagen, 'placa')
+        arr = np.array(recorte)
+        _labels, count = _label_components(arr[:, :, 3] >= 16)
+        self.assertEqual(count, 1)
+        self.assertEqual(info['engine'], 'borde-placa')
+        self.assertGreater(int(((arr[:, :, 0] > 200) & (arr[:, :, 1] > 160) & (arr[:, :, 3] > 200)).sum()), 1000)
+
+    def test_el_titulo_conserva_cada_letra_y_suelta_el_cielo(self):
+        imagen = Image.new('RGBA', (180, 80), (20, 70, 160, 255))
+        pixel = imagen.load()
+        for index in range(4):
+            x0 = 24 + index * 36
+            for y in range(22, 54):
+                for x in range(x0, x0 + 16):
+                    pixel[x, y] = (240, 190, 40, 255)
+        recorte, info = _recortar_silueta(imagen, {'x': 8, 'y': 8, 'w': 164, 'h': 64})
+        self.assertTrue(info.get('usable'))
+        self.assertEqual(info['engine'], 'contraste')
+        arr = np.array(recorte)
+        cielo = (arr[:, :, 2] > 120) & (arr[:, :, 0] < 80) & (arr[:, :, 3] > 16)
+        self.assertEqual(int(cielo.sum()), 0)
+        self.assertGreater(float((arr[:, :, 3] < 16).mean()), 0.05)
+        letras = (arr[:, :, 0] > 200) & (arr[:, :, 1] > 150) & (arr[:, :, 3] > 200)
+        _labels, count = _label_components(letras)
+        self.assertGreaterEqual(count, 4)
+        self.assertGreater(int(letras.sum()), 1500)
+
+    def test_el_simbolo_queda_solo_dentro_de_su_caja(self):
+        imagen = Image.new('RGBA', (120, 100), (12, 40, 30, 255))
+        pixel = imagen.load()
+        for y in range(28, 72):
+            for x in range(34, 86):
+                pixel[x, y] = (220, 40, 50, 255)
+        for y in range(8, 18):
+            for x in range(8, 22):
+                pixel[x, y] = (240, 210, 40, 255)
+        recorte, info = _recortar_silueta(imagen, {'x': 16, 'y': 14, 'w': 88, 'h': 72})
+        self.assertTrue(info.get('usable'))
+        arr = np.array(recorte)
+        rojo = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 80) & (arr[:, :, 3] > 200)
+        oro = (arr[:, :, 0] > 200) & (arr[:, :, 1] > 160) & (arr[:, :, 3] > 200)
+        self.assertGreater(int(rojo.sum()), 800)
+        self.assertEqual(int(oro.sum()), 0)
 
     def test_el_fondo_no_pasa_por_el_recorte_de_silueta(self):
         imagen = Image.new('RGBA', (24, 16), (12, 40, 90, 255))
