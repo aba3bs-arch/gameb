@@ -4,8 +4,8 @@ TITLE_LAWS = '''Leyes del título, para cualquier boceto:
 1. Un título es un solo letrero o un solo logo. Puede ser texto, un dibujo, o las dos cosas. No depende de un juego ni de un adorno concreto.
 2. Si hay palabras legibles, la misma caja las cubre todas. Está prohibido encerrar solo la palabra más grande o la de más contraste.
 3. Si no hay palabras, el título es la imagen completa: escudo, mascota, símbolo o letras que no se separan.
-4. Incluye lo que forma parte del mismo letrero aunque no sea letra: marco, cinta, corona, flores, resplandor, sombra o cualquier adorno pegado al logo.
-5. No incluyas jackpots, cifras de premio, símbolos sueltos, personajes ajenos ni el paisaje. Si un adorno toca otra pieza, la caja llega hasta el adorno y no se traga esa pieza.
+4. Incluye lo que forma parte del mismo letrero aunque no sea letra: el marco y cualquier adorno pegado al logo. No dependas de un adorno concreto.
+5. No incluyas jackpots, cifras de premio, símbolos sueltos ni el paisaje. Si un adorno toca otra pieza, la caja llega hasta el adorno y no se traga esa pieza.
 6. Si la caja corta una palabra o deja fuera una parte del mismo logo, hay que ampliarla.'''
 
 LEER_TITULO = '''Cómo devolver un título, sea cual sea el boceto:

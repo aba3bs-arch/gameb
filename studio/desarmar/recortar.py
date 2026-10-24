@@ -460,7 +460,7 @@ def _lado_recto(vals, fuerza, lado):
 
 
 def _cuadrado_de_simbolo(rgb, inner):
-    """Si el símbolo es un cuadrado con marco, devuelve ese rectángulo. Una figura suelta no entra."""
+    """Si el contorno exterior es un cuadrado, devuelve ese rectángulo. Cualquier otro contorno no entra."""
     np = _need_numpy()
     if not isinstance(inner, dict) or rgb.ndim != 3:
         return None
@@ -598,7 +598,7 @@ def _recortar_cuadrado(source, rect):
 
 
 def _paisaje_del_borde(rgb, salto=26):
-    """Color del borde. No sigue un degradado hasta comerse la figura."""
+    """Color del borde. No sigue un degradado hasta comerse el dibujo."""
     np = _need_numpy()
     from collections import deque
     alto, ancho = rgb.shape[:2]
@@ -629,7 +629,7 @@ def _paisaje_del_borde(rgb, salto=26):
 
 
 def _completar_contorno(rgb, mask):
-    """Suma el filo real de la figura. No rellena un hueco con el color del fondo."""
+    """Suma el filo real del dibujo. No rellena un hueco con el color del fondo."""
     np = _need_numpy()
     if mask is None or not np.any(mask):
         return mask
@@ -692,7 +692,7 @@ def _silueta_por_contraste(rgb, inner):
     cubierto = float(sujeto.sum()) / float(iw * ih)
     if cubierto < 0.12 or cubierto > 0.97:
         return None
-    # El sombrero y el adorno que se salen de la caja siguen, si están pegados al dibujo.
+    # Lo que sigue pegado y se sale de la caja se queda, si está unido al dibujo.
     paisaje = _paisaje_del_borde(rgb if rgb.dtype == np.uint8 else rgb.astype(np.uint8))
     labels, count = _label_components(~paisaje)
     if count == 0:
