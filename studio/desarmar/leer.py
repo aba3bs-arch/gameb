@@ -76,6 +76,8 @@ def _aplicar_titulo(comp, raw, width, height):
     comp['skipSave'] = united['skipSave']
     if 'x' in united:
         comp['x'], comp['y'], comp['w'], comp['h'] = united['x'], united['y'], united['w'], united['h']
+    if united['titleWords'] and not united['titleFailed']:
+        comp['name'] = ' '.join(united['titleWords'])
     return comp
 
 

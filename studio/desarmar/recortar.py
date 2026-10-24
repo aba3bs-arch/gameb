@@ -455,7 +455,18 @@ def _silueta_por_contraste(rgb, inner):
     cubierto = float(sujeto.sum()) / float(iw * ih)
     if cubierto < 0.12 or cubierto > 0.90:
         return None
-    return sujeto
+    # El sombrero y el adorno que se salen de la caja siguen, si están pegados al dibujo.
+    paisaje = _fondo_conectado_al_borde(rgb if rgb.dtype == np.uint8 else rgb.astype(np.uint8))
+    labels, count = _label_components(~paisaje)
+    if count == 0:
+        return sujeto
+    overlap = np.bincount(labels[sujeto].ravel(), minlength=count + 1)
+    keep = overlap > 0
+    keep[0] = False
+    crecido = keep[labels]
+    if int((crecido & sujeto).sum()) < int(sujeto.sum()) * 0.5:
+        return sujeto
+    return crecido
 
 
 def _recortar_silueta(source, inner):

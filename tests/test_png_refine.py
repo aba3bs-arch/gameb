@@ -259,6 +259,25 @@ class RecortePorTipoTest(unittest.TestCase):
         self.assertGreaterEqual(count, 4)
         self.assertGreater(int(letras.sum()), 1500)
 
+    def test_el_adorno_que_se_sale_de_la_caja_se_queda(self):
+        imagen = Image.new('RGBA', (160, 100), (20, 70, 160, 255))
+        pixel = imagen.load()
+        for y in range(28, 56):
+            for x in range(40, 110):
+                pixel[x, y] = (240, 190, 40, 255)
+        for y in range(56, 88):
+            for x in range(62, 84):
+                pixel[x, y] = (30, 160, 70, 255)
+        for y in range(2, 8):
+            for x in range(2, 8):
+                pixel[x, y] = (240, 210, 40, 255)
+        recorte, info = _recortar_silueta(imagen, {'x': 24, 'y': 16, 'w': 110, 'h': 46})
+        self.assertTrue(info.get('usable'))
+        arr = np.array(recorte)
+        verde = (arr[:, :, 1] > 120) & (arr[:, :, 0] < 80) & (arr[:, :, 3] > 200)
+        self.assertGreater(int(verde.sum()), 200)
+        self.assertGreater(int(((arr[:, :, 0] > 200) & (arr[:, :, 1] > 150) & (arr[:, :, 3] > 200)).sum()), 800)
+
     def test_el_simbolo_queda_solo_dentro_de_su_caja(self):
         imagen = Image.new('RGBA', (120, 100), (12, 40, 30, 255))
         pixel = imagen.load()

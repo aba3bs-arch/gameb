@@ -183,8 +183,9 @@ $('analyzeAI').onclick=async()=>{
    const label=`${p.type||""} ${p.name||""}`;
    const isTitle=/t[ií]tulo|logo|letrero/i.test(label);
    const isJackpot=/jackpot|grand|major|minor|mini/i.test(label);
-   const fx=isTitle?0.15:(isJackpot?0.045:0.025);
-   const fy=isTitle?0.18:(isJackpot?0.06:0.025);
+   const isSymbol=/s[ií]mbolo/i.test(label);
+   const fx=isTitle?0.32:(isJackpot?0.045:(isSymbol?0.12:0.025));
+   const fy=isTitle?0.40:(isJackpot?0.06:(isSymbol?0.14:0.025));
    const padX=Math.max(3,Math.round(p.w*fx)),padY=Math.max(3,Math.round(p.h*fy));
    const x=Math.max(0,Math.floor(p.x-padX)),y=Math.max(0,Math.floor(p.y-padY));
    const right=Math.min(W,Math.ceil(p.x+p.w+padX)),bottom=Math.min(H,Math.ceil(p.y+p.h+padY));
