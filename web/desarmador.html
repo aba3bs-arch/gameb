@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GAMEB Studio · Una imagen</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">GB</div>
+    <div>
+      <h1>Una imagen por vez</h1>
+      <p>Versión nueva. Mandas el boceto. El estudio hace una imagen, luego la siguiente.</p>
+    </div>
+  </div>
+  <a class="btn" href="/index.html">← Volver a GAMEB Studio</a>
+</header>
+<main>
+  <section class="panel">
+    <h2>Manda el boceto</h2>
+    <p>No tienes que marcar nada. El orden ya está puesto: primero una imagen, después la otra, hasta la última.</p>
+    <ol class="pasos" id="pasos"></ol>
+    <label class="field">Imagen del boceto (PNG, JPG o WebP)
+      <input id="file" type="file" accept="image/png,image/jpeg,image/webp">
+    </label>
+    <button id="empezar" class="primary" disabled>Hacer las imágenes en este orden</button>
+    <p id="status"></p>
+    <div class="stage">
+      <img id="sketch" alt="Boceto" hidden>
+    </div>
+    <h2>Imagen de ahora</h2>
+    <div class="resultado" id="resultado">
+      <p class="hint">Aquí vas a ver cada imagen cuando le toque. El cuadrito gris es la parte transparente.</p>
+    </div>
+  </section>
+  <aside class="panel">
+    <h3>Imágenes hechas</h3>
+    <p class="hint" id="cuenta">Todavía no hay imágenes.</p>
+    <div class="list" id="lista"></div>
+  </aside>
+</main>
+<script src="desarmador.js"></script>
+</body>
+</html>
