@@ -5,15 +5,17 @@ from studio.desarmar.fondo import _pyramid_fill
 from studio.desarmar.recortar import Image, _dilate_bool, _label_components, _need_numpy
 
 CATALOGO = '''Lámina de salida, para cualquier boceto. No busques las piezas de un juego fijo: usa solo lo que se ve.
-- Un objeto, un PNG. No agrupes botones, símbolos ni placas.
-- Fondo: un solo componente, id fondo_principal, tipo Fondo. Es la escena completa, sin título, placas, símbolos, marco ni botones.
-- Título: puede ser letras, un dibujo o las dos cosas. id titulo_ y el nombre visible. Si no hay palabras, una parte role imagen cubre el logo.
+Devuelve SOLO estas piezas. Cada una es un PNG. No devuelvas nada más.
+- Fondo: un solo componente, id fondo_principal, tipo Fondo. Es la escena completa y opaca, sin título, placas, símbolos, marco ni botones. No la partas en cielo, luna, edificios, nubes, flores ni personajes.
+- Título: el logo completo. Puede ser letras, un dibujo o las dos cosas. id titulo_ y el nombre visible. Si no hay palabras, una parte role imagen cubre el logo.
 - Marco de rodillos, solo si el boceto tiene rodillos: id marco_rodillos. hole es la ventana interior. El centro del PNG queda transparente.
-- Cada placa de premio es un Jackpot con id jackpot_ y su nombre. grand, major, minor y mini son ejemplos, no una lista cerrada. El monto va en parts con role cifra y el programa lo borra.
-- Cada panel lleva id panel_ y su nombre. La cifra también va en parts con role cifra.
-- Cada símbolo lleva id simbolo_ y el nombre del dibujo que se ve.
+- Cada icono dentro de los rodillos es un Símbolo, id simbolo_ y el nombre del dibujo. Un bonus que está en una celda es un Símbolo. Lo que está pintado en el paisaje no es un símbolo.
+- Cada placa de premio es un Jackpot, id jackpot_ y su nombre. grand, major, minor y mini son ejemplos, no una lista cerrada. El monto va en parts con role cifra y el programa lo borra.
 - Cada botón lleva id boton_ y su nombre.
-- Un letrero de líneas, si se ve, es tipo Contador e id indicador_lineas_izq o indicador_lineas_der. No uses role cifra en él.
+- Cada panel lleva id panel_ y su nombre. La cifra también va en parts con role cifra.
+- Un letrero de líneas, si se ve, es tipo Contador e id indicador_lineas_izq o indicador_lineas_der. Conserva el texto. No uses role cifra en él.
+No uses los tipos Decoración, Efecto, Otro ni Bonus. No devuelvas pedazos del fondo.
+- Un objeto, un PNG. No agrupes botones, símbolos ni placas.
 - role cifra solo marca montos. Nunca una palabra del título ni el nombre de una placa.'''
 
 _FOLDS = str.maketrans('áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN')
@@ -28,6 +30,8 @@ _BOTONES = (
     ('spin', 'boton_girar'),
     ('info', 'boton_info'),
 )
+_TIPOS_LAMINA = {'Fondo', 'Título / logo', 'Marco de rodillos', 'Símbolo', 'Jackpot', 'Botón', 'Panel'}
+_PAISAJE = ('escena', 'paisaje', 'cielo', 'ciudad', 'edificio', 'decoracion', 'ambiente', 'nube')
 
 
 def _slug(text):
@@ -240,6 +244,81 @@ def _placa_para(cifra, placas):
     return None
 
 
+def _es_paisaje(comp):
+    blob = _blob(comp)
+    return any(_tiene(blob, word) for word in _PAISAJE)
+
+
+def _contador_de_la_lamina(comp):
+    blob = _blob(comp)
+    if _tiene(blob, 'linea'):
+        return True
+    return any(_tiene(blob, word) for word in ('apuesta', 'credito', 'ganancia'))
+
+
+def _sobra_en_la_lamina(comp):
+    """Un pedazo de paisaje, un efecto o un tipo ajeno no es un PNG de la lámina."""
+    if es_solo_cifra(comp):
+        return False
+    tipo = str(comp.get('type') or '')
+    if tipo in ('Decoración', 'Efecto', 'Otro'):
+        return True
+    if tipo == 'Contador':
+        return not _contador_de_la_lamina(comp)
+    if tipo not in _TIPOS_LAMINA:
+        return True
+    if es_fondo(comp):
+        return False
+    return tipo == 'Símbolo' and _es_paisaje(comp)
+
+
+def _un_solo_fondo(comps, notes):
+    fondos = [comp for comp in comps if es_fondo(comp)]
+    if len(fondos) < 2:
+        return comps
+    def area(comp):
+        return _area({'x': comp['x'], 'y': comp['y'], 'w': comp['w'], 'h': comp['h']})
+    principal = max(fondos, key=area)
+    nombres = [str(comp.get('name') or 'fondo') for comp in fondos if comp is not principal]
+    notes.append('Se dejó un solo fondo, la escena completa. No se exportan: ' + ', '.join(nombres[:6]) + '.')
+    quitar = {id(comp) for comp in fondos if comp is not principal}
+    return [comp for comp in comps if id(comp) not in quitar]
+
+
+def _simbolos_fuera_del_marco(comps, width, height, notes):
+    """Un símbolo es un icono de los rodillos. Un dibujo en el cielo no lo es."""
+    escena = max(1, int(width) * int(height))
+    marcos = []
+    for comp in comps:
+        if not es_marco(comp):
+            continue
+        caja = {'x': comp['x'], 'y': comp['y'], 'w': comp['w'], 'h': comp['h']}
+        if _area(caja) >= escena * 0.12:
+            marcos.append(caja)
+    if not marcos:
+        return comps
+    fuera = []
+    quedaron = []
+    for comp in comps:
+        if str(comp.get('type') or '') != 'Símbolo':
+            quedaron.append(comp)
+            continue
+        blob = _blob(comp)
+        if any(_tiene(blob, word) for word in ('jackpot', 'grand', 'major', 'minor', 'mini')):
+            quedaron.append(comp)
+            continue
+        caja = {'x': comp['x'], 'y': comp['y'], 'w': comp['w'], 'h': comp['h']}
+        area = _area(caja)
+        mejor = max((_interseccion(caja, marco) for marco in marcos), default=0)
+        if area and mejor / area < 0.35:
+            fuera.append(str(comp.get('name') or 'símbolo'))
+            continue
+        quedaron.append(comp)
+    if fuera:
+        notes.append('No se exportan dibujos que están fuera de los rodillos: ' + ', '.join(fuera[:8]) + '.')
+    return quedaron
+
+
 def _lados_de_lineas(comps):
     lineas = [comp for comp in comps if comp.get('fileName') == 'indicador_lineas']
     lineas.sort(key=lambda comp: (comp.get('x', 0), comp.get('y', 0)))
@@ -268,6 +347,18 @@ def _unicos(comps):
 def preparar_catalogo(comps, width, height):
     """Asigna el archivo de la lámina, vacía el marco y aparta las cifras."""
     notes = []
+    utiles = []
+    fuera = []
+    for comp in comps:
+        if str(comp.get('type') or '') == 'Bonus':
+            comp['type'] = 'Símbolo'
+        if _sobra_en_la_lamina(comp):
+            fuera.append(str(comp.get('name') or comp.get('id') or 'pieza'))
+            continue
+        utiles.append(comp)
+    if fuera:
+        notes.append('No se exportan pedazos del fondo ni adornos de la escena: ' + ', '.join(fuera[:8]) + '.')
+    comps = utiles
     for comp in comps:
         comp['fileName'] = _nombre(comp)
         if es_marco(comp):
@@ -299,6 +390,8 @@ def preparar_catalogo(comps, width, height):
             notes.append('La cifra «' + comp['name'] + '» se quita de ' + placa['name'] + '.')
         else:
             notes.append('La cifra «' + comp['name'] + '» no se guarda como PNG.')
+    quedaron = _simbolos_fuera_del_marco(quedaron, width, height, notes)
+    quedaron = _un_solo_fondo(quedaron, notes)
     _lados_de_lineas(quedaron)
     _unicos(quedaron)
     return quedaron, notes

@@ -63,6 +63,48 @@ class CatalogoTest(unittest.TestCase):
         self.assertFalse(marco['holeEstimated'])
         self.assertTrue(any('cifra' in note for note in notes))
 
+    def test_no_exporta_pedazos_del_fondo(self):
+        comps = [
+            _pieza(id='fondo', name='Fondo principal', type='Fondo', x=0, y=0, w=800, h=600),
+            _pieza(id='cielo', name='Cielo', type='Fondo', x=0, y=0, w=800, h=180),
+            _pieza(id='luna', name='Luna del paisaje', type='Decoración', x=40, y=20, w=60, h=60),
+            _pieza(id='ciudad', name='Ciudad', type='Otro', x=0, y=200, w=400, h=200),
+            _pieza(id='chispas', name='Chispas doradas', type='Efecto', x=10, y=10, w=30, h=30),
+            _pieza(id='nube', name='Nube', type='Símbolo', x=200, y=220, w=70, h=70),
+            _pieza(id='aguila', name='Águila del cielo', type='Símbolo', x=30, y=30, w=80, h=50),
+            _pieza(id='bonus', name='Bonus', type='Bonus', x=300, y=300, w=70, h=70),
+            _pieza(id='charro', name='Charro', type='Símbolo', x=140, y=220, w=70, h=70),
+            _pieza(id='nave', name='Nave espacial', type='Símbolo', x=400, y=240, w=70, h=70),
+            _pieza(id='estrella', name='Estrella', type='Símbolo', x=480, y=240, w=70, h=70),
+            _pieza(id='boton', name='Girar', type='Botón', x=700, y=500, w=80, h=80),
+            _pieza(id='grand', name='GRAND', type='Jackpot', x=10, y=20, w=180, h=70),
+            _pieza(id='titulo', name='Titulo', type='Título / logo', x=250, y=0, w=300, h=80, titleWords=['TIERRA']),
+            _pieza(id='marco', name='Marco de rodillos', type='Marco de rodillos', x=80, y=160, w=500, h=360),
+            _pieza(id='apuesta', name='Apuesta', type='Panel', x=20, y=530, w=120, h=40),
+            _pieza(id='lineas', name='20 LINEAS', type='Contador', x=620, y=540, w=80, h=30),
+            _pieza(id='giros', name='Contador de giros', type='Contador', x=400, y=540, w=80, h=30),
+        ]
+        quedaron, notes = preparar_catalogo(comps, 800, 600)
+        nombres = [comp['fileName'] for comp in quedaron]
+        ids = [comp['id'] for comp in quedaron]
+        self.assertEqual([nombre for nombre in nombres if nombre.startswith('fondo')], ['fondo_principal'])
+        for ident in ('cielo', 'luna', 'ciudad', 'chispas', 'nube', 'aguila', 'giros'):
+            self.assertNotIn(ident, ids)
+        for nombre in (
+            'titulo_tierra',
+            'jackpot_grand',
+            'marco_rodillos',
+            'simbolo_charro',
+            'simbolo_nave_espacial',
+            'simbolo_estrella',
+            'simbolo_bonus',
+            'boton_girar',
+            'panel_apuesta',
+            'indicador_lineas_izq',
+        ):
+            self.assertIn(nombre, nombres)
+        self.assertTrue(any('pedazos del fondo' in note for note in notes))
+
     def test_estima_el_centro_del_marco_cuando_no_viene_la_ventana(self):
         comps = [_pieza(id='marco', name='Marco de rodillos', type='Marco de rodillos', x=0, y=0, w=200, h=100)]
         quedaron, notes = preparar_catalogo(comps, 200, 100)
