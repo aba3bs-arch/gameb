@@ -34,8 +34,8 @@ if errorlevel 1 (
   echo.
 )
 echo Cerrando el programa viejo...
-powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8766" ^| findstr /I "LISTENING ESCUCHANDO"') do taskkill /F /PID %%a >nul 2>nul
+echo Programa viejo cerrado.
 timeout /t 1 /nobreak >nul
 echo Abriendo el servidor nuevo. Deja abierta la otra ventana negra.
 start "GAMEB Studio - version nueva" /D "%~dp0" %PYEXE% server.py
