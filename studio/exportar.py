@@ -1,8 +1,12 @@
 """ZIP de demostración. No certifica RTP ni pagos reales."""
 import io, json, zipfile, re
 from studio.datos import decode_data
-from studio.desarmar.recortar import Image
 from studio.paths import ROOT
+
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 def enviar(handler, data):
     payload=data;proj=payload.get('project',{});assets=payload.get('assets',{});name=re.sub(r'[^a-zA-Z0-9_-]+','_',proj.get('name','GAMEB_JUEGO')).strip('_') or 'GAMEB_JUEGO'

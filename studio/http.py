@@ -2,20 +2,21 @@
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-import threading
 import urllib.parse
 
 from studio.auth import finish_oauth, read_credentials
 from studio.biblioteca import eliminar, importar, listar
 from studio.boceto import generate_sketch_with_openai
 from studio.chat import transmitir
-from studio.desarmar.fondo import limpiar
-from studio.desarmar.generar import generar_pieza
-from studio.desarmar.inspeccionar import revisar
-from studio.desarmar.leer import analizar
-from studio.desarmar.recortar import Image, _warm_segmenter, quitar_fondo
 from studio.exportar import enviar
+from studio.imagen import hacer_imagen
+from studio.orden import ordenar
 from studio.paths import ASSET_DIR, ROOT, WEB
+
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 
 def asset_path(url_path):
@@ -99,20 +100,11 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as exc:
                     return self.send_json(502, {'error': str(exc)})
                 return self.send_json(200, result)
-            if path == '/api/generate-piece':
-                code, obj = generar_pieza(data)
+            if path == '/api/orden':
+                code, obj = ordenar(data)
                 return self.send_json(code, obj)
-            if path == '/api/remove-background':
-                code, obj = quitar_fondo(data)
-                return self.send_json(code, obj)
-            if path == '/api/clean-background':
-                code, obj = limpiar(data)
-                return self.send_json(code, obj)
-            if path == '/api/inspect-crop':
-                code, obj = revisar(data)
-                return self.send_json(code, obj)
-            if path == '/api/analyze':
-                code, obj = analizar(data)
+            if path == '/api/hacer-imagen':
+                code, obj = hacer_imagen(data)
                 return self.send_json(code, obj)
             if path == '/api/export':
                 return enviar(self, data)
@@ -172,5 +164,4 @@ def main():
     print(f'GAMEB Studio VERSION NUEVA: http://127.0.0.1:{port}')
     print('Conexión ChatGPT:', 'credenciales guardadas' if read_credentials().get('access_token') else 'pendiente de iniciar sesión')
     print('API key de respaldo:', 'configurada' if os.environ.get('OPENAI_API_KEY') else 'no configurada')
-    threading.Thread(target=_warm_segmenter, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

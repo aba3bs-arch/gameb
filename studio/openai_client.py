@@ -32,11 +32,11 @@ def choose_model(token, preferred='gpt-4.1-mini', use_chatgpt_plan=True):
   return models[0]
  return preferred if preferred in models else models[0]
 
-def openai_response(payload, token):
+def openai_response(payload, token, timeout=45):
  payload['store']=False; payload['stream']=True
  req=urllib.request.Request('https://api.openai.com/v1/responses',data=json.dumps(payload).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'text/event-stream'},method='POST')
  try:
-  with urllib.request.urlopen(req,timeout=45) as r:
+  with urllib.request.urlopen(req,timeout=timeout) as r:
    chunks=[]
    for rawline in r:
     line=rawline.decode('utf-8','replace').strip()
@@ -58,6 +58,6 @@ def openai_response(payload, token):
   if 'subscription_sharing_usage_limit_exceeded' in body or 'subscription_sharing_usage_unavailable' in body: raise RuntimeError('El uso incluido de ChatGPT no está disponible o llegó a su límite. Revisa los límites de la app en Configuración de ChatGPT.')
   raise RuntimeError('OpenAI respondió HTTP '+str(e.code)+': '+body)
  except (TimeoutError, socket.timeout) as e:
-  raise RuntimeError('La solicitud a ChatGPT tardó más de 60 segundos y se canceló. Revisa tu internet y vuelve a intentar.')
+  raise RuntimeError('La solicitud a ChatGPT tardó más de '+str(timeout)+' segundos y se canceló. Revisa tu internet y vuelve a intentar.')
  except urllib.error.URLError as e:
   raise RuntimeError('No se pudo conectar con ChatGPT: '+str(getattr(e,'reason',e)))

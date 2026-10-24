@@ -49,7 +49,7 @@ if errorlevel 1 (
 )
 start "" "http://127.0.0.1:8766/desarmador.html?nueva=1"
 echo.
-echo Listo. En la pagina, debajo del titulo, debe decir: Version nueva. Cinco pasos.
+echo Listo. En la pagina, debajo del titulo, debe decir: Mandas el boceto. El estudio hace una imagen, luego la siguiente.
 echo Si no lo dice, cierra Edge por completo y vuelve a hacer doble clic en este archivo.
 echo.
 pause

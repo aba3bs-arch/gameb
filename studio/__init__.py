@@ -1,1 +1,1 @@
-"""GAMEB Studio: estudio local para desarmar un boceto en PNG."""
+"""GAMEB Studio: mandas un boceto y sale una imagen, luego la siguiente."""
