@@ -214,7 +214,7 @@ $('analyzeAI').onclick=async()=>{
   if(backgroundMode){
    status(`La IA propuso ${pieces.length} región(es) de escena. No se aplicó rembg al fondo para evitar borrar la escena completa. Revisa cada recorte; las partes ocultas por títulos o jackpots no se reconstruyen automáticamente. ${j.summary||''}`,'ok');
   }else{
-   status(`La IA encontró ${pieces.length} componentes visibles. Se intentará quitar el fondo solo a piezas de primer plano; las piezas de tipo Fondo se conservarán intactas. ${j.summary||''}`,'ok');
+   status(`Se leyeron ${pieces.length} piezas. El estudio las genera igual al boceto, en tu PC. ChatGPT no dibuja los PNG. ${j.summary||''}`,'ok');
    await processDetectedSilhouettes();
    showProgress('Reconstruyendo el fondo',70,'Se retiran del escenario las piezas ya separadas.','fondo');
    await cleanBackgroundPlate();
@@ -288,21 +288,21 @@ async function saveAllAutomatically(){
 async function processDetectedSilhouettes(){
  if(!img)return status('Primero carga el PNG original.','err');
  if(!pieces.length)return status('Primero identifica o crea los recortes.','err');
- const btn=$('analyzeAI');btn.textContent='Generando siluetas…';let ok=0,skipped=0,failed=[];
+ const btn=$('analyzeAI');btn.textContent='Generando piezas…';let ok=0,skipped=0,failed=[];
  try{
   for(let i=0;i<pieces.length;i++){
    const piece=pieces[i];
    if(isBackgroundPiece(piece)){
     piece.processedCanvas=null;piece.processedDataURL=null;piece.silhouetteReady=false;piece.requiresBackgroundReview=true;skipped++;
-    status(`Pieza ${i+1}/${pieces.length}: ${piece.name}. Es una escena de fondo; se conserva sin aplicar segmentación de primer plano.`);
+    status(`Pieza ${i+1}/${pieces.length}: ${piece.name}. Es la escena completa; se deja entera.`);
     continue;
    }
    if(piece.processedCanvas&&piece.silhouetteReady&&canvasHasVisiblePixels(piece.processedCanvas)){ok++;continue;}
-   btn.textContent=`Generando siluetas ${i+1}/${pieces.length}…`;showProgress(`Recortando pieza ${i+1}/${pieces.length}`,35+(i/pieces.length)*40,`Procesando: ${piece.name}. La primera pieza puede tardar mientras se carga el modelo.`,'recortar');
-   status(`Procesando ${i+1}/${pieces.length}: ${piece.name}. La primera pieza puede tardar mientras carga el modelo.`);
+   btn.textContent=`Generando piezas ${i+1}/${pieces.length}…`;showProgress(`Generando pieza ${i+1}/${pieces.length}`,35+(i/pieces.length)*40,`Generando ${piece.name} igual al boceto. ChatGPT no dibuja esta pieza.`,'recortar');
+   status(`Generando ${i+1}/${pieces.length}: ${piece.name}. Sale igual al boceto, sin pedirle el dibujo a ChatGPT.`);
    try{
     const image=makePiecePreview(i),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),180000);
-    let r;try{r=await fetch('/api/remove-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({image,inner:innerBoxFor(piece),kind:[piece.type||'',piece.fileName||''].filter(Boolean).join(' ')},laminaPayload(piece,true))),signal:controller.signal})}finally{clearTimeout(timer)}
+    let r;try{r=await fetch('/api/generate-piece',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({image,inner:innerBoxFor(piece),kind:[piece.type||'',piece.fileName||''].filter(Boolean).join(' ')},laminaPayload(piece,true))),signal:controller.signal})}finally{clearTimeout(timer)}
     let d;try{d=await r.json()}catch(_){throw Error(`Respuesta inválida del motor (HTTP ${r.status}).`)}
     if(!r.ok||!d.ok)throw Error(d.error||`El motor respondió HTTP ${r.status}`);
     if(!d.image||!d.image.startsWith('data:image/png;base64,'))throw Error('El motor no devolvió un PNG válido.');
@@ -314,11 +314,11 @@ async function processDetectedSilhouettes(){
    draw();renderList();
   }
   if(selected>=0&&pieces[selected]){updateInspect();updateQualityReport()}
-  const parts=[`Siluetas de primer plano correctas: ${ok}.`,`${skipped} fondo(s) conservados sin quitarles el fondo.`];
+  const parts=[`Piezas generadas igual al boceto: ${ok}.`,`${skipped} fondo(s) se dejaron enteros.`];
   if(failed.length)parts.push(`Fallos (${failed.length}): ${failed.slice(0,4).join(' | ')}`);
   else parts.push('Revisa visualmente cada pieza antes de registrarla.');
   status(parts.join(' '),failed.length?'err':'ok');
- }catch(e){status('Error al generar siluetas: '+e.message,'err')}
+ }catch(e){status('Error al generar las piezas: '+e.message,'err')}
 }
 $('autoGrid').onclick=()=>{if(!img){status('Primero carga una imagen.','err');return}const cols=Math.max(1,Math.min(20,+$('gridCols').value||5)),rows=Math.max(1,Math.min(20,+$('gridRows').value||3)),gap=Math.max(0,+$('gridGap').value||0),cw=img.naturalWidth/cols,ch=img.naturalHeight/rows;pieces=[];for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const x=c*cw+gap/2,y=r*ch+gap/2,w=cw-gap,h=ch-gap;pieces.push({x,y,w,h,name:`Celda ${r+1}-${c+1}`,type:'Símbolo'})}selected=0;selectPiece(0);status(`Se propusieron ${pieces.length} recortes de cuadrícula. Revisa y ajusta las piezas antes de guardarlas.`,'ok')};$('addCrop').onclick=()=>{if(!img){status('Primero carga una imagen.','err');return}const W=img.naturalWidth,H=img.naturalHeight;addPiece(W*.25,H*.25,W*.5,H*.5,`Componente ${pieces.length+1}`);status('Recorte añadido. Arrastra dentro de la imagen para dibujar otro rectángulo.','ok')};$('clearPieces').onclick=()=>{pieces=[];selected=-1;draw();renderList();status('Se borraron los recortes de la sesión; los PNG guardados no se borraron.')};canvas.addEventListener('pointerdown',e=>{if(!img||['erase','restore'].includes($('cleanTool').value))return;canvas.setPointerCapture(e.pointerId);const p=toImagePoint(e);drag={x:p.x,y:p.y};if(selected>=0){const q=pieces[selected];if(p.x>=q.x&&p.x<=q.x+q.w&&p.y>=q.y&&p.y<=q.y+q.h)drag.moving={index:selected,dx:p.x-q.x,dy:p.y-q.y}}});canvas.addEventListener('pointermove',e=>{if(!drag||!img||['erase','restore'].includes($('cleanTool').value))return;const p=toImagePoint(e);if(drag.moving){const q=pieces[drag.moving.index];q.x=Math.max(0,Math.min(img.naturalWidth-q.w,p.x-drag.moving.dx));q.y=Math.max(0,Math.min(img.naturalHeight-q.h,p.y-drag.moving.dy));selected=drag.moving.index;draw()}else{draw();ctx.strokeStyle='#ffdf70';ctx.lineWidth=Math.max(2,canvas.width/700);ctx.setLineDash([8,5]);ctx.strokeRect(drag.x,drag.y,p.x-drag.x,p.y-drag.y);ctx.setLineDash([])}});canvas.addEventListener('pointerup',e=>{if(!drag||!img||['erase','restore'].includes($('cleanTool').value)){drag=null;return}const p=toImagePoint(e);if(!drag.moving){const x=Math.min(drag.x,p.x),y=Math.min(drag.y,p.y),w=Math.abs(p.x-drag.x),h=Math.abs(p.y-drag.y);if(w>4&&h>4)addPiece(x,y,w,h,`Componente ${pieces.length+1}`)}drag=null;draw();renderList()});$('applyName').onclick=()=>{if(selected<0)return status('Selecciona una pieza.','err');pieces[selected].name=$('pieceName').value.trim()||`Componente ${selected+1}`;pieces[selected].type=$('pieceType').value;draw();renderList();status('Nombre y tipo actualizados.','ok')};async function savePiece(i){const p=pieces[i];let data;if(p.processedCanvas){data=p.processedCanvas.toDataURL('image/png')}else if(p.processedDataURL){data=p.processedDataURL}else{const out=document.createElement('canvas');out.width=Math.round(p.w);out.height=Math.round(p.h);out.getContext('2d').drawImage(cleanCanvas.width?cleanCanvas:img,p.x,p.y,p.w,p.h,0,0,out.width,out.height);data=out.toDataURL('image/png')}const name=archivoDe(p);const r=await fetch('/api/assets/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,filename:name+'.png',mimeType:'image/png',data})});const j=await r.json();if(!r.ok)throw Error(j.error||'No se pudo guardar '+name);return j}$('saveOne').onclick=async()=>{if(selected<0)return status('Selecciona una pieza primero.','err');try{const p=pieces[selected];p.name=$('pieceName').value.trim()||p.name;p.type=$('pieceType').value;const j=await savePiece(selected);status(`Guardado en biblioteca: ${j.name}. PNG de ${Math.round(p.w)}×${Math.round(p.h)} px.`,'ok');renderList()}catch(e){status('Error al guardar: '+e.message,'err')}};$('saveAll').onclick=async()=>{if(!pieces.length)return status('No hay piezas para guardar.','err');$('saveAll').disabled=true;let ok=0,skip=[];try{for(let i=0;i<pieces.length;i++){const p=pieces[i];if(p.skipSave){skip.push(p.titleReason?`${p.name}: ${p.titleReason}`:(p.name||`Pieza ${i+1}`));continue;}if(!isBackgroundPiece(p)&&!(p.silhouetteReady&&p.processedCanvas&&canvasHasVisiblePixels(p.processedCanvas))){skip.push(p.name||`Pieza ${i+1}`);continue}await savePiece(i);ok++;status(`Guardando piezas válidas: ${ok}/${pieces.length}…`)}status(`Proceso terminado: ${ok} PNG guardados. ${skip.length} pieza(s) omitidas por no tener silueta validada${skip.length?': '+skip.slice(0,5).join(' · '):'.'}`,skip.length?'err':'ok')}catch(e){status(`Se guardaron ${ok} de ${pieces.length}. Error: ${e.message}`,'err')}finally{$('saveAll').disabled=false}};
 

@@ -10,6 +10,7 @@ from studio.biblioteca import eliminar, importar, listar
 from studio.boceto import generate_sketch_with_openai
 from studio.chat import transmitir
 from studio.desarmar.fondo import limpiar
+from studio.desarmar.generar import generar_pieza
 from studio.desarmar.inspeccionar import revisar
 from studio.desarmar.leer import analizar
 from studio.desarmar.recortar import Image, _warm_segmenter, quitar_fondo
@@ -98,6 +99,9 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as exc:
                     return self.send_json(502, {'error': str(exc)})
                 return self.send_json(200, result)
+            if path == '/api/generate-piece':
+                code, obj = generar_pieza(data)
+                return self.send_json(code, obj)
             if path == '/api/remove-background':
                 code, obj = quitar_fondo(data)
                 return self.send_json(code, obj)
