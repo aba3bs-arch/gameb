@@ -2,7 +2,7 @@
 'Servidor local GAMEB Studio. Sign in with ChatGPT (OAuth) para uso elegible del plan; API key opcional solo como respaldo.'
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-import os, socket, json, base64, io, zipfile, urllib.request, urllib.error, urllib.parse, re, time, secrets, hashlib, threading, webbrowser, uuid, datetime, html
+import os, socket, json, base64, io, zipfile, urllib.request, urllib.error, urllib.parse, re, time, secrets, hashlib, threading, webbrowser, uuid, datetime
 ROOT=Path(__file__).resolve().parent
 ASSET_DIR=ROOT/'assets'/'imported'
 ASSET_DIR.mkdir(parents=True,exist_ok=True)
@@ -538,64 +538,6 @@ Busca problemas que sí sean visibles: bordes cortados, restos de fondo, halos, 
  if not isinstance(strengths,list): strengths=[]
  return {'ok':True,'summary':str(parsed.get('summary','Inspección terminada.'))[:1200], 'quality':parsed.get('quality') if parsed.get('quality') in ['Correcto','Revisar','Defectos detectados'] else ('Defectos detectados' if clean else 'Revisar'), 'issues':clean,'strengths':[str(x)[:300] for x in strengths[:6]],'ready_to_register':bool(parsed.get('ready_to_register',False)),'confidence':max(0,min(1,float(parsed.get('confidence',.5)))),'model':choose_model(token),'authMode':auth_mode,'imageBytes':len(raw),'mimeType':mime}
 
-def sanitize_svg(raw):
- text=str(raw or '').strip()
- text=re.sub(r'^```(?:svg|xml)?\s*','',text,flags=re.I)
- text=re.sub(r'\s*```$','',text)
- start=text.find('<svg');end=text.rfind('</svg>')
- if start<0 or end<0: raise ValueError('La IA no devolvió un SVG válido. Intenta con una idea más corta.')
- svg=text[start:end+6]
- if len(svg)>2_000_000: raise ValueError('El boceto generado es demasiado grande.')
- low=svg.lower()
- if any(x in low for x in ['<script','javascript:','<foreignobject','<iframe','<image',' onload=',' onclick=']) or re.search(r'\b(?:href|xlink:href|src)\s*=\s*[\"\']\s*(?:https?:|//|data:)',svg,re.I):
-  raise ValueError('El SVG generado contenía elementos no permitidos; vuelve a generar.')
- if not re.search(r'<svg\b',svg) or not re.search(r'</svg>',svg): raise ValueError('SVG incompleto.')
- return svg
-
-def _optional_png(data):
- if not data: return b''
- head,raw=decode_data(str(data))
- if not head.lower().startswith('data:image/png') or not raw.startswith(b'\x89PNG\r\n\x1a\n'):
-  raise ValueError('La vista PNG del boceto no es válida.')
- if len(raw)>8*1024*1024: raise ValueError('La vista PNG de un boceto supera 8 MB.')
- return raw
-
-def build_sketches_zip(project_name, sketches):
- if not isinstance(sketches,list) or not sketches: raise ValueError('No hay bocetos para empaquetar.')
- if len(sketches)>12: raise ValueError('Puedes incluir hasta 12 bocetos en un ZIP.')
- slug=re.sub(r'[^a-zA-Z0-9_-]+','_',str(project_name or 'bocetos')).strip('_')[:70] or 'bocetos'
- prepared=[]
- for index,item in enumerate(sketches,1):
-  if not isinstance(item,dict): raise ValueError(f'El boceto {index} no tiene un formato válido.')
-  try: svg=sanitize_svg(item.get('svg',''))
-  except ValueError as exc: raise ValueError(f'Boceto {index}: {exc}')
-  try: png=_optional_png(item.get('png',''))
-  except ValueError as exc: raise ValueError(f'Boceto {index}: {exc}')
-  prepared.append({'index':index,'svg':svg,'png':png,'concept':str(item.get('concept',''))[:500],'style':str(item.get('style',''))[:80],'theme':str(item.get('theme',''))[:80]})
- mem=io.BytesIO();archive=zipfile.ZipFile(mem,'w',zipfile.ZIP_DEFLATED)
- manifest=[]
- for item in prepared:
-  filename=f'boceto-{item["index"]:02d}.svg'
-  archive.writestr(f'{slug}/{filename}',item['svg'])
-  png_name=''
-  if item['png']:
-   png_name=f'boceto-{item["index"]:02d}.png'
-   archive.writestr(f'{slug}/{png_name}',item['png'])
-  manifest.append({'index':item['index'],'svg':filename,'png':png_name,'concept':item['concept'],'style':item['style'],'theme':item['theme']})
- archive.writestr(f'{slug}/manifiesto.json',json.dumps({'project':project_name,'sketches':manifest},ensure_ascii=False,indent=2))
- archive.writestr(f'{slug}/index.html',_sketches_index_html(project_name,prepared))
- archive.writestr(f'{slug}/README.md',f'# {project_name or "Bocetos"}\n\nAbre `index.html` para inspeccionar juntos los {len(prepared)} bocetos. Cada SVG y PNG también está guardado por separado.\n')
- archive.close()
- return mem.getvalue(),slug+'_bocetos.zip'
-
-def _sketches_index_html(project_name, sketches):
- articles=[]
- for item in sketches:
-  meta=' · '.join(part for part in (item['style'],item['theme'],item['concept']) if part)
-  articles.append(f'<article><h2>Boceto {item["index"]}</h2><p>{html.escape(meta or "Sin descripción")}</p><div class="frame">{item["svg"]}</div></article>')
- title=html.escape(str(project_name or 'Bocetos'))
- return f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title} · Inspección de bocetos</title><style>body{{margin:0;background:#08111f;color:#f3f6ff;font:16px/1.45 system-ui,sans-serif}}main{{max-width:1100px;margin:auto;padding:24px}}article{{margin:0 0 28px;padding:16px;border:1px solid #2b4263;border-radius:16px;background:#101d30}}h1,h2{{margin:0 0 8px}}p{{color:#aab9d1}}.frame{{overflow:auto;border-radius:10px;background:#07101c}}.frame svg{{display:block;width:100%;height:auto}}</style></head><body><main><h1>{title}</h1><p>{len(sketches)} bocetos conservados para inspección.</p>{''.join(articles)}</main></body></html>'''
-
 def generate_sketch_with_openai(name, theme, style, concept, cols, rows, notes):
  token=access_token()
  auth_mode='chatgpt'
@@ -606,8 +548,16 @@ def generate_sketch_with_openai(name, theme, style, concept, cols, rows, notes):
  prompt=f"""Crea un boceto visual original de una tragamonedas en SVG autocontenido de 1000x600 píxeles. Es un concepto de interfaz ficticia, sin dinero real. Juego: {name or 'Juego nuevo'}. Tema: {theme or 'Aventura fantástica'}. Estilo visual: {style or 'Moderno premium'}. Idea del usuario: {concept or 'Diseño atractivo y legible'}. Rodillos: {cols} columnas x {rows} filas. Notas: {notes or 'Sin notas adicionales'}.
 Devuelve SOLO el SVG completo, sin markdown ni explicaciones. Usa viewBox="0 0 1000 600", fondo elaborado, título legible, un marco central con exactamente {cols} columnas y {rows} filas, símbolos vectoriales sencillos originales, paneles de jackpot arriba y controles abajo. Composición equilibrada, bordes limpios, sin elementos fuera del lienzo, textos cortos en español, contraste alto, estética pulida. Usa solo SVG y formas vectoriales (rect, path, circle, ellipse, polygon, text, defs/linearGradient). No uses scripts, enlaces, imágenes externas, foreignObject ni filtros costosos. Debe ser SVG válido y cerrar todos los tags."""
  body={'model':choose_model(token, use_chatgpt_plan=(auth_mode=='chatgpt')),'input':[{'role':'user','content':[{'type':'input_text','text':prompt}]}]}
- try: svg=sanitize_svg(openai_response(body,token))
- except ValueError as exc: raise RuntimeError(str(exc))
+ out=openai_response(body,token).strip()
+ out=re.sub(r'^```(?:svg|xml)?\s*','',out,flags=re.I);out=re.sub(r'\s*```$','',out)
+ start=out.find('<svg');end=out.rfind('</svg>')
+ if start<0 or end<0: raise RuntimeError('La IA no devolvió un SVG válido. Intenta con una idea más corta.')
+ svg=out[start:end+6]
+ if len(svg)>2_000_000: raise RuntimeError('El boceto generado es demasiado grande.')
+ low=svg.lower()
+ if any(x in low for x in ['<script','javascript:','<foreignobject','<iframe','<image',' onload=',' onclick=']) or re.search(r'\b(?:href|xlink:href|src)\s*=\s*[\"\']\s*(?:https?:|//|data:)',svg,re.I):
+  raise RuntimeError('El SVG generado contenía elementos no permitidos; vuelve a generar.')
+ if not re.search(r'<svg\b',svg) or not re.search(r'</svg>',svg): raise RuntimeError('SVG incompleto.')
  return {'ok':True,'svg':svg,'authMode':auth_mode,'summary':'Boceto vectorial generado con IA. Revísalo y edítalo antes de usarlo como referencia.'}
 
 class Handler(SimpleHTTPRequestHandler):
@@ -706,11 +656,6 @@ class Handler(SimpleHTTPRequestHandler):
      result=generate_sketch_with_openai(str(data.get('name',''))[:120],str(data.get('theme',''))[:120],str(data.get('style',''))[:120],str(data.get('concept',''))[:2500],max(3,min(6,int(data.get('columns',5)))),max(3,min(5,int(data.get('rows',3)))),str(data.get('notes',''))[:1500])
     except Exception as e: return self.send_json(502,{'error':str(e)})
     return self.send_json(200,result)
-   if self.path=='/api/sketches/zip':
-    try: blob,filename=build_sketches_zip(str(data.get('name',''))[:120],data.get('sketches',[]))
-    except ValueError as e: return self.send_json(400,{'error':str(e)})
-    except Exception as e: return self.send_json(500,{'error':'No se pudo crear el ZIP: '+str(e)[:300]})
-    self.send_response(200);self.send_header('Content-Type','application/zip');self.send_header('Content-Disposition',f'attachment; filename="{filename}"');self.send_header('Content-Length',str(len(blob)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(blob);return
    if self.path=='/api/remove-background':
     try:
      if Image is None: return self.send_json(503,{'ok':False,'error':'Falta Pillow. Instala las dependencias del proyecto.'})
