@@ -13,12 +13,46 @@ main{max-width:1440px;margin:auto;padding:18px;display:grid;grid-template-column
 .side{display:flex;flex-direction:column;gap:12px}.panel{padding:15px}.panel h3{margin:0 0 10px;font-size:15px}.authstate{font-size:13px;color:var(--muted);margin:9px 0;overflow-wrap:anywhere}.projectgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}input,select,.image-prompt{min-width:0;width:100%;padding:9px;border-radius:9px;border:1px solid #344a6a;background:#081322;color:var(--text);font:inherit}.image-prompt{min-height:100px;resize:vertical}.image-preview{display:none;width:100%;max-height:420px;object-fit:contain;border:1px solid var(--line);border-radius:10px;background:#081322;margin-top:10px}.image-status{font-size:12px;color:var(--muted);margin-top:8px;overflow-wrap:anywhere}.image-status.ok{color:var(--green)}.image-status.err{color:var(--red)}.image-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.image-actions a{color:var(--blue);font-size:13px}.asset-gallery{display:flex;flex-direction:column;gap:8px;margin-top:8px}.asset-item{display:grid;grid-template-columns:54px minmax(0,1fr) auto;align-items:center;gap:8px;padding:7px;border:1px solid var(--line);border-radius:9px}.asset-item img{width:54px;height:54px;object-fit:contain;background:#081322;border-radius:6px}.asset-item strong{display:block;font-size:12px;overflow-wrap:anywhere}.asset-item small{color:var(--muted);font-size:11px}.asset-item button{padding:6px 8px;font-size:11px}.quick{display:flex;flex-wrap:wrap;gap:7px}.quick button{font-size:12px;padding:8px}.todo{padding-left:18px;color:var(--muted);font-size:13px}.todo li{margin:7px 0}.pill{display:inline-block;border-radius:30px;padding:3px 8px;background:#263a56;font-size:11px;color:#dbe8ff}
 footer{max-width:1440px;margin:0 auto;padding:0 18px 24px;color:var(--muted);font-size:12px}
 @media(max-width:900px){main{grid-template-columns:1fr}.side{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}header{align-items:flex-start;flex-wrap:wrap}}@media(max-width:560px){.side{grid-template-columns:1fr}#chat{min-height:320px}header{padding:13px}.workhead{align-items:flex-start;flex-direction:column}}
+
+/* Keep the tools and conversation in separate scrolling regions. */
+.side{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-color:var(--line) transparent}
+.side>.panel{flex-shrink:0}
+.side:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+.folder-button{width:100%;display:flex;align-items:center;justify-content:center;gap:9px}
+.folder-icon{width:21px;height:21px;flex-shrink:0;vertical-align:middle}
+.project-folders{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
+.project-folders[hidden]{display:none}
+.project-folders summary{cursor:pointer;padding:7px 2px;color:var(--gold);overflow-wrap:anywhere}
+.folder-children{margin-left:9px;padding-left:10px;border-left:1px solid var(--line)}
+.folder-file{padding:5px 2px;color:var(--muted);overflow-wrap:anywhere}
+.folder-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px}
+.folder-toolbar[hidden]{display:none}
+.folder-toolbar button{padding:5px 8px;font-size:12px}
+@media(min-width:901px){
+ body{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+ header,footer{flex-shrink:0}
+ main{width:100%;flex:1;min-height:0;overflow:hidden}
+ .workspace{min-height:0;display:flex;flex-direction:column}
+ .workhead,.composer,.typing{flex-shrink:0}
+ #chat{height:auto;min-height:0;flex:1;overscroll-behavior:contain}
+ #chat>.msg,#chat>.welcome{flex-shrink:0}
+}
+@media(max-width:900px){.side{max-height:65vh;max-height:65dvh;display:flex}.side>.panel{min-width:0}}
 </style></head><body>
 <header><div class="brand"><div class="logo">GB</div><div><h1>GAMEB Studio · Núcleo IA</h1><p>Un espacio de comandos para diseñar, construir y validar tus juegos</p></div></div><span class="pill">CURSOR · CHAT + BIBLIOTECA VISUAL</span></header>
 <main><section class="workspace"><div class="workhead"><div><h2>Comandos del proyecto</h2><div class="status" id="streamStatus">Preparando estado de conexión…</div></div><button id="clearChat">Limpiar conversación</button></div>
 <div id="chat"><div class="welcome"><div class="big">✦</div><h2>¿Qué vamos a construir?</h2><p>Usa el chat para planear y programar. Los bocetos se diseñan aquí contigo y después se importan a la biblioteca visual.</p><div class="quick"><button data-prompt="Ayúdame a definir el concepto de una tragamonedas mexicana moderna.">Crear concepto</button><button data-prompt="Diseña la estructura visual de una tragamonedas de 5 columnas por 3 filas.">Diseñar interfaz</button><button data-prompt="Crea una lista de componentes que necesitamos para un juego nuevo.">Listar componentes</button></div></div></div><div id="typing" class="typing">La IA está respondiendo…</div>
 <div class="composer"><textarea id="prompt" placeholder="Escribe una orden para GAMEB Studio… (Enter para enviar, Shift+Enter para nueva línea)"></textarea><div class="composefoot"><span class="hint">Cursor procesa cada orden y muestra el resultado aquí. Las tareas pueden tardar varios minutos.</span><div><button id="stop" disabled>Detener</button> <button id="send" class="primary">Enviar orden ↑</button></div></div></div>
-</section><aside class="side">
+</section><aside class="side" tabindex="0" aria-label="Herramientas y proyectos">
+<div class="panel">
+<h3>Carpetas del proyecto</h3>
+<button id="openProjectFolder" class="primary folder-button" type="button"><svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v2H5a2 2 0 0 0-2 2z"/><path d="M5 10h16l-3 10H3V12a2 2 0 0 1 2-2Z"/></svg>Abrir carpeta</button>
+<input id="projectFolderInput" type="file" webkitdirectory multiple hidden>
+<p class="hint">Selecciona «proyectos» o «mi-tragamonedas» de tu equipo para explorar sus carpetas y archivos.</p>
+<div id="folderStatus" class="hint" role="status" aria-live="polite">Ninguna carpeta seleccionada. Los archivos no se suben.</div>
+<div id="folderToolbar" class="folder-toolbar" hidden><button id="toggleProjectFolders" type="button" aria-expanded="true" aria-controls="projectFolders">Ocultar carpetas</button><button id="clearProjectFolder" type="button">Cerrar carpeta</button></div>
+<div id="projectFolders" class="project-folders" hidden></div>
+</div>
 <div class="panel"><h3>Conexión con Cursor</h3><div class="authstate" id="authStatus" role="status" aria-live="polite">Consultando Cursor…</div><button id="connect" class="primary">Conectar con Cursor</button><p class="hint">Las órdenes se procesan mediante Cursor Cloud Agents. Su uso depende de los permisos y límites de tu cuenta de Cursor.</p><details id="cursorSetup"><summary>Configurar conexión</summary><p class="hint">En la configuración del proyecto en Netlify, añade CURSOR_API_KEY como variable de entorno secreta con alcance Functions. Usa una clave de tu panel de Cursor y vuelve a desplegar el sitio. No pegues la clave en este chat.</p><a href="https://cursor.com/dashboard" target="_blank" rel="noopener noreferrer">Abrir panel de Cursor</a></details></div>
 <div class="panel"><h3>Proyecto activo</h3><div class="projectgrid"><label class="field">Nombre<input id="pname" value="Mi tragamonedas"></label><label class="field">Tema<input id="ptheme" value="Mexicano moderno"></label><label class="field">Columnas<select id="cols"><option>5</option><option>3</option><option>4</option><option>6</option></select></label><label class="field">Filas<select id="rows"><option>3</option><option>4</option><option>5</option></select></label></div><p class="hint">Este contexto se adjunta a las órdenes nuevas.</p><button id="saveProject">Guardar contexto local</button><div id="saveStatus" class="hint"></div></div>
 <div class="panel"><h3>Una imagen por vez</h3><p class="hint">Mandas el boceto. El estudio hace primero el fondo, después el título, y sigue una imagen tras otra. No tienes que marcarlas.</p><a href="/desarmador.html" style="display:block;text-align:center;text-decoration:none;background:linear-gradient(135deg,#f5d985,#dca23f);color:#182031;border:1px solid #f5d985;padding:10px 12px;border-radius:10px;font-weight:800">Abrir una imagen por vez</a></div><div class="panel" id="imagePanel"><h3>Biblioteca visual</h3><p class="hint">Pide a Cursor ayuda con el diseño y el código. Importa aquí las imágenes que ya tengas; el chat no garantiza generar archivos PNG.</p><label class="field">Importar imagen PNG, JPG o WebP<input id="assetFile" type="file" accept="image/png,image/jpeg,image/webp"></label><label class="field" style="margin-top:8px">Nombre del componente<input id="assetName" maxlength="100" placeholder="Ej. símbolo escarabajo dorado"></label><button id="uploadAsset" class="primary" style="width:100%;margin-top:10px">Importar a biblioteca</button><div id="imageStatus" class="image-status" role="status">Los archivos se guardarán localmente en esta instalación.</div><img id="imagePreview" class="image-preview" alt="Vista previa del componente seleccionado"><div class="image-actions"><a id="downloadImage" href="#" download="gameb_asset.png" style="display:none">Descargar imagen</a><button id="clearImage" type="button">Limpiar vista</button></div><div class="divider" style="height:1px;background:var(--line);margin:14px 0"></div><h3>Componentes importados</h3><div id="assetGallery" class="asset-gallery"><p class="hint">Cargando biblioteca…</p></div></div>
@@ -27,6 +61,30 @@ footer{max-width:1440px;margin:0 auto;padding:0 18px 24px;color:var(--muted);fon
 </aside></main><footer>GAMEB Studio es un prototipo de desarrollo. Las propuestas de IA deben revisarse; la matemática, el comportamiento y los archivos del juego requieren pruebas antes de considerarse terminados.</footer>
 <script>
 const $=id=>document.getElementById(id);let history=[],controller=null,assistantNode=null;
+
+const folderInput=$('projectFolderInput'),folderTree=$('projectFolders'),folderToolbar=$('folderToolbar');
+$('openProjectFolder').onclick=()=>{folderInput.value='';folderInput.click()};
+function setFoldersVisible(visible){folderTree.hidden=!visible;$('toggleProjectFolders').setAttribute('aria-expanded',String(visible));$('toggleProjectFolders').textContent=visible?'Ocultar carpetas':'Mostrar carpetas'}
+$('toggleProjectFolders').onclick=()=>setFoldersVisible(folderTree.hidden);
+$('clearProjectFolder').onclick=()=>{folderTree.replaceChildren();folderTree.hidden=true;folderToolbar.hidden=true;folderInput.value='';$('folderStatus').textContent='Ninguna carpeta seleccionada. Los archivos no se suben.';};
+folderInput.onchange=()=>{
+ const files=Array.from(folderInput.files||[]);if(!files.length)return;
+ const root={folders:new Map(),files:[]};
+ for(const file of files){const parts=(file.webkitRelativePath||file.name).split('/');let branch=root;for(const part of parts.slice(0,-1)){if(!branch.folders.has(part))branch.folders.set(part,{folders:new Map(),files:[]});branch=branch.folders.get(part)}branch.files.push(parts.at(-1))}
+ const sortNames=(a,b)=>a.localeCompare(b,'es',{numeric:true});
+ function render(branch,target,depth=0){
+  for(const name of [...branch.folders.keys()].sort(sortNames)){
+   const details=document.createElement('details'),summary=document.createElement('summary'),children=document.createElement('div');
+   summary.textContent=name;children.className='folder-children';details.append(summary,children);target.append(details);
+   let rendered=false;const populate=()=>{if(rendered)return;rendered=true;render(branch.folders.get(name),children,depth+1)};
+   details.addEventListener('toggle',()=>{if(details.open)populate()});if(depth===0){populate();details.open=true}
+  }
+  for(const name of branch.files.sort(sortNames)){const row=document.createElement('div');row.className='folder-file';row.textContent=name;target.append(row)}
+ }
+ folderTree.replaceChildren();render(root,folderTree);folderToolbar.hidden=false;setFoldersVisible(true);
+ $('folderStatus').textContent=files.length+' archivo'+(files.length===1?'':'s')+' en la carpeta seleccionada. Vista local; no se suben archivos.';
+};
+
 function addMessage(role,text,extra=''){const n=document.createElement('div');n.className='msg '+role+(extra?' '+extra:'');n.textContent=text;$('chat').appendChild(n);$('chat').scrollTop=$('chat').scrollHeight;return n}
 function removeWelcome(){const w=document.querySelector('.welcome');if(w)w.remove()}
 async function cursorRequest(action, text, signal){const r=await fetch('/api/cursor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,text}),signal});const j=await r.json();if(!r.ok)throw Error(j.error||'No se pudo conectar con Cursor.');return j}
