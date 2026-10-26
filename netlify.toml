@@ -1,0 +1,9 @@
+[build]
+  command = "python3 scripts/prepare_site.py"
+  publish = "dist"
+
+# Preserve links to the previous deployment's /web/ URLs.
+[[redirects]]
+  from = "/web/*"
+  to = "/:splat"
+  status = 301
